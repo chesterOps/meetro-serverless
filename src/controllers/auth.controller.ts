@@ -532,7 +532,7 @@ export const googleAuth = catchAsync(async (req, res, next) => {
     }
 
     // Check if user exists
-    let user = await User.findOne({ email });
+    let user = await User.findOne({ email }).select("+googleId");
 
     // If user exists but wasn't created via Google, prevent account takeover
     if (user && !user.googleId) {
