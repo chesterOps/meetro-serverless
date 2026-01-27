@@ -597,8 +597,7 @@ export const googleAuth = catchAsync(async (req, res, next) => {
     await user.save({ validateBeforeSave: false });
 
     // Add refresh token to response
-    if (process.env.NODE_ENV === "prod")
-      res.cookie("refresh-token", refreshToken, cookieConfig);
+    res.cookie("refresh-token", refreshToken, cookieConfig);
 
     // Send response
     res.status(200).json({
