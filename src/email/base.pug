@@ -1,0 +1,58 @@
+doctype html
+html(lang="en")
+  head
+    meta(charset="UTF-8")
+    meta(name="viewport" content="width=device-width")
+    title= "Meetro"
+    link(href="https://api.fontshare.com/v2/css?f[]=satoshi@1&display=swap" rel="stylesheet")
+    link(href="https://fonts.googleapis.com/css2?family=Paytone+One&display=swap" rel="stylesheet")
+  
+  body(style="margin: 0; width: 100%; background-color: #f9f9f9; font-family: 'Satoshi', Helvetica, Arial, sans-serif; -webkit-text-size-adjust: none;")
+    //- Outer Wrapper
+    table(role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="border-collapse: collapse; width: 100%;")
+      tbody
+        tr
+          td(align="center" style="padding: 48px 0;")
+            //- Main Container
+            table(role="presentation" cellspacing="0" cellpadding="0" border="0" width="640" style="width: 100%; max-width: 640px; background-color: #ffffff; border-radius: 24px; overflow: hidden; border-collapse: collapse;")
+              tbody
+                //- Header
+                tr
+                  td(align="center" style="background-color: #ffffff; background-repeat: no-repeat; background-size: cover; background-position: center; padding: 48px 0; text-align: center;" background= cloudinaryImagePath + "pattern_qb2xbq.jpg")
+                    img(src= cloudinaryImagePath + "logo_axsfku.png" alt="Meetro Logo" style="display: block; margin: 0 auto;")
+                
+                //- Content Section
+                tr
+                  td(style="padding: 48px 16px; background-color: #ffffff;")
+                    table(role="presentation" border="0" cellspacing="0" cellpadding="0" style="max-width: 544px; margin: 0 auto; border-collapse: collapse; font-family: 'Satoshi', Helvetica, Arial, sans-serif; color: #001010; font-size: 16px; line-height: 24px; font-weight: 500; width: 100%;")
+                      tbody
+                        //- Main content block
+                        block content
+                        
+                        //- Social Media Links
+                        tr
+                          td
+                            table(role="presentation" cellspacing="0" cellpadding="0" border="0" style="padding: 16px 0 32px 0; line-height: 24px; width: 100%;")
+                              tbody
+                                tr
+                                  td(style="line-height: 0;")
+                                    a(href= siteUrl target="_blank" style="display: inline-block;")
+                                      img(src= cloudinaryImagePath + "logo-alt_isqqkv.png" style="display: block;")
+                                  td(style="line-height: 0;")
+                                    div(style="text-align: right;")
+                                      a(href="https://www.linkedin.com/company/meetrolive/" target="_blank" style="text-decoration: none; display: inline-block; margin-right: 12px;")
+                                        img(src= cloudinaryImagePath + "linkedin_sjjb1e.png" alt="linked-in-icon")
+                                      a(href="https://www.instagram.com/meetro.live/" target="_blank" style="text-decoration: none; display: inline-block; margin-right: 12px;")
+                                        img(src= cloudinaryImagePath + "instagram_k61u6t.png" alt="instagram-icon")
+                                      a(href="#" target="_blank" style="text-decoration: none; display: inline-block; margin-right: 12px;")
+                                        img(src= cloudinaryImagePath + "facebook_myo9u1.png" alt="facebook-icon")
+                                      a(href="https://x.com/Meetrolive" target="_blank" style="text-decoration: none; display: inline-block;")
+                                        img(src= cloudinaryImagePath + "twitter_q32uku.png" alt="x-icon")
+                        
+                        //- Footer Links
+                        tr
+                          td
+                            div(style="text-align: center; font-size: 14px; font-weight: 700; line-height: 20px;")
+                              a(href="#" target="_blank" style="display: inline-block; text-decoration: none; color: #7a60bf;") Help Center
+                              a(href="#" target="_blank" style="display: inline-block; padding: 0 16px; text-decoration: none; color: #7a60bf;") Privacy Policy
+                              a(href="#" target="_blank" style="display: inline-block; text-decoration: none; color: #7a60bf;") Terms of service

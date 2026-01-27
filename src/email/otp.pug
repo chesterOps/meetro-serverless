@@ -1,0 +1,42 @@
+extends base.pug
+
+block content
+  //- Title
+  tr
+    td
+      h1(style="font-family: 'Paytone One', 'Arial Black', Arial, Helvetica, sans-serif; font-size: 24px; padding-bottom: 16px; line-height: 32px; font-weight: 400; margin: 0;") Your Meetro OTP Code is #{otp}
+  
+  //- Greeting
+  tr
+    td
+      p(style="margin: 0; padding: 16px 0; font-weight: 700;") Hey #{firstName}👋,
+  
+  //- Main message
+  tr
+    td(style="padding: 16px 0;")
+      p(style="margin: 0;") Here's your one-time password to verify your Meetro account:
+  
+  //- OTP Code Display (individual digits)
+  tr
+    td(style="padding: 16px 0;")
+      div(style="text-align: center; font-size: 24px; line-height: 32px; font-weight: 700; color: #001010;")
+        - var digits = otp.toString().split('')
+        each digit in digits
+          span(style="background-color: #f7ffec; border: 1px solid #d1e7b0; border-radius: 12px; padding: 8px 0; width: 48px; height: 48px; box-sizing: border-box; display: inline-block; margin-right: 10px;")= digit
+  
+  //- Copy Code Button
+  tr
+    td(style="padding: 16px 0; text-align: center;")
+      a(href=`#` style="line-height: 10px; border-radius: 60px; padding: 16px 0; color: #aefc40; font-family: 'Paytone One', 'Arial Black', Arial, Helvetica, sans-serif; font-size: 14px; display: inline-block; text-decoration: none; width: 200px; background-color: #011f0f;") Copy Code
+  
+  //- Expiry and security message
+  tr
+    td(style="padding: 16px 0;")
+      p(style="margin: 0;") It's only valid for the next 10 minutes, so don't nap on it.
+      p(style="margin: 0;") Didn't request this? Just ignore this email.
+  
+  //- Sign-off
+  tr
+    td(style="padding: 16px 0;")
+      p(style="margin: 0;") Let's keep things secure,
+      p(style="margin: 0; font-weight: 700;") The Meetro Team

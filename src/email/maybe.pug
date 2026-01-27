@@ -1,0 +1,31 @@
+extends base
+
+block content
+  tr
+    td
+      h1(style="font-family: 'Paytone One', 'Arial Black', Arial, Helvetica, sans-serif; font-size: 24px; padding-bottom: 16px; line-height: 32px; font-weight: 400; margin: 0;")
+        | You marked "Maybe" for #{eventName}!
+  tr
+    td
+      p(style="margin: 0; padding: 16px 0; font-weight: 700;")
+        | Hey #{firstName}👋,
+  tr
+    td
+      p(style="margin: 0; padding: 16px 0;")
+        | You've marked "Maybe" for #{eventName} no stress! Just know there's a spot for you if you decide to show up. 💃
+  tr
+    td
+      div(style="border-radius: 24px; overflow: hidden; padding: 16px 0;")
+        img(src= eventImage alt="event-image" style="width: 100%; aspect-ratio: 1/1; object-fit: cover; display: block;")
+  tr
+    td
+      p(style="margin: 0; font-weight: 700; padding-top: 16px;")
+        | Want to update your RSVP?
+  tr
+    td(style="padding: 16px 0; text-align: center;")
+      a(href= url target="_blank" style="line-height: 10px; border-radius: 60px; padding: 16px 0; color: #aefc40; font-family: 'Paytone One', 'Arial Black', Arial, Helvetica, sans-serif; font-size: 14px; display: inline-block; text-decoration: none; width: 200px; background-color: #011f0f;")
+        | Update Status
+  tr
+    td
+      p(style="margin: 0; padding: 16px 0;")
+        | Hope to see you there!

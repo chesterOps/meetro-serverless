@@ -1,0 +1,36 @@
+extends base.pug
+
+block content
+  //- Title
+  tr
+    td
+      h1(style="font-family: 'Paytone One', 'Arial Black', Arial, Helvetica, sans-serif; font-size: 24px; padding-bottom: 16px; line-height: 32px; font-weight: 400; margin: 0;") 🎉 Welcome to Meetro!
+  
+  //- Greeting
+  tr
+    td
+      p(style="margin: 0; padding: 16px 0; font-weight: 700;") Hey #{firstName}👋,
+  
+  //- Main message
+  tr
+    td
+      p(style="margin: 0; padding: 16px 0;") We're so excited to have you here! Meetro is all about making real-life meetups easier, more fun, and way less stressful.
+  
+  tr
+    td
+      p(style="margin: 0; padding: 16px 0;") Start by creating your first event, exploring vibes, or joining one your friends shared.
+  
+  tr
+    td
+      p(style="margin: 0; font-weight: 700; padding-top: 16px;") Let's make things happen together.
+  
+  //- CTA Button
+  tr
+    td(style="padding: 16px 0; text-align: center;")
+      a(href= url target="_blank" style="line-height: 10px; border-radius: 60px; padding: 16px 0; color: #aefc40; font-family: 'Paytone One', 'Arial Black', Arial, Helvetica, sans-serif; font-size: 14px; display: inline-block; text-decoration: none; width: 200px; background-color: #011f0f;") Create Event
+  
+  //- Sign-off
+  tr
+    td(style="padding: 16px 0;")
+      p(style="margin: 0;") Talk soon,
+      p(style="margin: 0; font-weight: 700;") The Meetro Team

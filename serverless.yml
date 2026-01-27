@@ -1,0 +1,81 @@
+# "org" ensures this Service is used with the correct Serverless Framework Access Key.
+org: meetro
+# "service" is the name of this project. This will also be added to your AWS resource names.
+service: meetro-server
+
+provider:
+  stage: ${opt:stage, "prod"}
+  name: aws
+  profile: "chester"
+  runtime: nodejs20.x
+  timeout: 30 # Increase to 30 seconds
+  memorySize: 512 # Tip: Higher memory = Faster CPU = Faster connection
+  region: eu-north-1
+  environment:
+    NODE_ENV: ${self:provider.stage }
+    MONGO_URL: ${env:MONGO_URL}
+    PORT: ${env:PORT}
+    RESEND_API_KEY: ${env:RESEND_API_KEY}
+    FRONT_URL: ${env:FRONT_URL}
+    GOOGLE_CLIENT_ID: ${env:GOOGLE_CLIENT_ID}
+    PAYSTACK_SECRET_KEY: ${env:PAYSTACK_SECRET_KEY}
+    ACCESS_TOKEN_SECRET: ${env:ACCESS_TOKEN_SECRET}
+    REFRESH_TOKEN_SECRET: ${env:REFRESH_TOKEN_SECRET}
+    CLOUDINARY_CLOUD_NAME: ${env:CLOUDINARY_CLOUD_NAME}
+    CLOUDINARY_API_KEY: ${env:CLOUDINARY_API_KEY}
+    CLOUDINARY_API_SECRET: ${env:CLOUDINARY_API_SECRET}
+    SETTLEMENT_LOOKBACK_DAYS: ${env:SETTLEMENT_LOOKBACK_DAYS, '1'}
+
+  httpApi:
+    cors:
+      allowedOrigins:
+        - ${env:FRONT_URL}
+        - http://localhost:5173
+        - http://localhost:5174
+      allowedHeaders:
+        - Content-Type
+        - Authorization
+        - Cookie
+        - Set-Cookie
+      allowedMethods:
+        - GET
+        - POST
+        - PUT
+        - PATCH
+        - DELETE
+        - OPTIONS
+      allowCredentials: true
+
+  # Uncomment to easily set up a custom domain. Read the docs for more details:
+  # https://www.serverless.com/framework/docs/providers/aws/guide/domains
+  # domain: api.example.com
+
+package:
+  patterns:
+    - "src/email/**/*.pug"
+
+build:
+  esbuild:
+    bundle: true
+    minify: false
+    external:
+      - mongodb
+      - mongoose
+
+functions:
+  api:
+    handler: src/handler.handler
+    events:
+      - httpApi: "*"
+    timeout: 29
+    memorySize: 1024
+  paystackSettlement:
+    handler: src/paystack/paystackSettlementPoller.handler
+    events:
+      - schedule:
+          rate: cron(0 9 * * ? *)
+          enabled: true
+    timeout: 300
+    memorySize: 512
+plugins:
+  - serverless-offline
