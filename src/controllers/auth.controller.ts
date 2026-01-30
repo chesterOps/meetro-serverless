@@ -4,6 +4,8 @@ import UserToken from "../models/usertokens.model";
 import AppError from "../utils/appError";
 import catchAsync from "../utils/catchAsync";
 import Email from "../utils/email";
+import Event from "../models/event.model";
+import Response from "../models/response.model";
 import { deleteImage } from "../middlewares/image";
 import {
   fetchRefreshToken,
@@ -416,10 +418,30 @@ export const getProfile = catchAsync(async (_req, res, next) => {
   const userProfile = { ...userData } as any;
 
   if (photo) userProfile.photo = photo.url;
+
+  // Get user events count
+  const createdEventsCount = await Event.countDocuments({
+    "host.email": user.email,
+  });
+  userProfile.createdEventsCount = createdEventsCount;
+
+  // Get user attended events count
+  const attendedEventsCount = await Response.countDocuments({
+    user: user._id,
+    status: "going",
+  });
+  userProfile.attendedEventsCount = attendedEventsCount;
+
   // Send response
   res.status(200).json({
     status: "success",
-    data: userProfile,
+    data: {
+      user: userProfile,
+      userEventsCount: {
+        hosted: createdEventsCount,
+        attended: attendedEventsCount,
+      },
+    },
   });
 });
 

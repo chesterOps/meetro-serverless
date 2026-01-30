@@ -69,13 +69,13 @@ functions:
       - httpApi: "*"
     timeout: 29
     memorySize: 1024
-  paystackSettlement:
-    handler: src/paystack/paystackSettlementPoller.handler
-    events:
-      - schedule:
-          rate: cron(0 9 * * ? *)
-          enabled: true
-    timeout: 300
-    memorySize: 512
+  # paystackSettlement:
+  #   handler: src/paystack/paystackSettlementPoller.handler
+  #   events:
+  #     - schedule:
+  #         rate: cron(0 9 * * ? *)
+  #         enabled: true
+  #   timeout: 300
+  #   memorySize: 512
 plugins:
   - serverless-offline
