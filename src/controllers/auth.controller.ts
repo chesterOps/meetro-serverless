@@ -81,7 +81,7 @@ export const login = catchAsync(async (req, res, next) => {
   await user.save();
 
   // Add refresh token to response
-  res.cookie("refresh-token", refreshToken, cookieConfig);
+  //res.cookie("refresh-token", refreshToken, cookieConfig);
 
   // Send response
   res.status(200).json({
@@ -423,14 +423,12 @@ export const getProfile = catchAsync(async (_req, res, next) => {
   const createdEventsCount = await Event.countDocuments({
     "host.email": user.email,
   });
-  userProfile.createdEventsCount = createdEventsCount;
 
   // Get user attended events count
   const attendedEventsCount = await Response.countDocuments({
     user: user._id,
     status: "going",
   });
-  userProfile.attendedEventsCount = attendedEventsCount;
 
   // Send response
   res.status(200).json({

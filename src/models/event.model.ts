@@ -345,7 +345,7 @@ eventSchema.virtual("status").get(function (this: IEvent) {
   const now = new Date();
   if (now < this.startDate) return "upcoming";
   if (now >= this.startDate && now <= this.endDate) return "ongoing";
-  return "past";
+  return "completed";
 });
 
 // Virtual donations details
@@ -367,11 +367,13 @@ eventSchema.pre(/^find/, async function (this: mongoose.Query<any, any>) {
 
 eventSchema.pre("save", async function () {
   // Construct slug from title and creator ID
-  const doc = this as any;
-  doc.slug = `${createEventSlug({
-    title: doc.title,
-    creator: doc.creator,
-  })}`;
+  if (this.isNew) {
+    const doc = this as any;
+    doc.slug = `${createEventSlug({
+      title: doc.title,
+      creator: doc.creator.toString(),
+    })}`;
+  }
 });
 
 eventSchema.post("findOneAndDelete", async function (doc) {

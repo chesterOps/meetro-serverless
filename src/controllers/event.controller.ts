@@ -1,13 +1,13 @@
-import { isValidObjectId } from "mongoose";
-import { deleteImage } from "../middlewares/image";
 import Donation from "../models/donation.model";
 import Event from "../models/event.model";
 import Response from "../models/response.model";
 import User from "../models/user.model";
-import { paystack } from "../paystack/paystackSettlementPoller";
 import AppError from "../utils/appError";
 import catchAsync from "../utils/catchAsync";
 import Email from "../utils/email";
+import { deleteImage } from "../middlewares/image";
+import { isValidObjectId } from "mongoose";
+import { paystack } from "../paystack/paystackSettlementPoller";
 import { buildICS, formatDate, formatTime, toBase64 } from "../utils/helpers";
 
 // Helper function to format user data for guest display
@@ -21,7 +21,10 @@ const formatGuestData = (user: any) => {
 };
 
 // Helper function to format event data for response
-const formatEventData = (event: any, options?: { skipCreator?: boolean }) => {
+const formatEventData = (
+  event: any,
+  options?: { skipCreator?: boolean; skipGuests?: boolean },
+) => {
   const eventObj = event.toObject ? event.toObject() : { ...event };
 
   // Extract and format image
@@ -38,10 +41,24 @@ const formatEventData = (event: any, options?: { skipCreator?: boolean }) => {
   delete eventObj.updateCount;
 
   // Format guests to include user details
-  if (eventObj.guests && eventObj.guests.length > 0) {
+  if (!options?.skipGuests && eventObj.guests && eventObj.guests.length > 0) {
     eventObj.guests = eventObj.guests.map((guest: any) => {
       return formatGuestData(guest.user);
     });
+  }
+
+  // Add status field based on startDate and endDate
+  if (eventObj.startDate && eventObj.endDate) {
+    const now = new Date();
+    const start = new Date(eventObj.startDate);
+    const end = new Date(eventObj.endDate);
+    if (now < start) {
+      eventObj.status = "upcoming";
+    } else if (now >= start && now <= end) {
+      eventObj.status = "ongoing";
+    } else {
+      eventObj.status = "completed";
+    }
   }
 
   return eventObj;
@@ -297,104 +314,111 @@ export const getMyEvents = catchAsync(async (req, res, _next) => {
 
   // Use aggregation for efficient pagination
   const results = await Event.aggregate([
+    // 1. Initial Filter (Performance first!)
     {
-      $facet: {
-        // Created events pipeline
-        createdEvents: [
-          { $match: { creator: user._id, ...dateFilter } },
-          {
-            $addFields: {
-              userRole: "creator",
-              userResponse: "going",
-            },
-          },
+      $match: {
+        $or: [
+          { creator: user._id },
+          { "host.email": user.email },
+          { "cohosts.email": user.email },
         ],
-        // Guest events pipeline
-        guestEvents: [
-          {
-            $lookup: {
-              from: "responses",
-              let: { eventId: "$_id" },
-              pipeline: [
-                {
-                  $match: {
-                    $expr: {
-                      $and: [
-                        { $eq: ["$event", "$$eventId"] },
-                        { $eq: ["$user", user._id] },
-                      ],
-                    },
-                  },
-                },
-              ],
-              as: "userResponses",
-            },
-          },
+        ...dateFilter,
+      },
+    },
+    // 2. Lookup for CURRENT USER'S response (to set userResponse)
+    {
+      $lookup: {
+        from: "responses",
+        let: { eventId: "$_id" },
+        pipeline: [
           {
             $match: {
-              "userResponses.0": { $exists: true },
-              creator: { $ne: user._id },
-              ...dateFilter,
-            },
-          },
-          {
-            $addFields: {
-              userResponse: { $arrayElemAt: ["$userResponses.status", 0] },
-              userRole: {
-                $cond: [
-                  { $eq: ["$host.email", user.email] },
-                  "host",
-                  {
-                    $cond: [
-                      { $in: [user.email, "$cohosts.email"] },
-                      "cohost",
-                      "guest",
-                    ],
-                  },
+              $expr: {
+                $and: [
+                  { $eq: ["$event", "$$eventId"] },
+                  { $eq: ["$user", user._id] },
                 ],
               },
             },
           },
-          { $project: { userResponses: 0 } },
         ],
+        as: "currentUserResponse",
       },
     },
-    // Combine both arrays
+    // 3. Lookup for ALL GUESTS (including User details from your User model)
     {
-      $project: {
-        allEvents: { $concatArrays: ["$createdEvents", "$guestEvents"] },
+      $lookup: {
+        from: "responses",
+        let: { eventId: "$_id" },
+        pipeline: [
+          { $match: { $expr: { $eq: ["$event", "$$eventId"] } } },
+          {
+            $lookup: {
+              from: "users", // Must match your User collection name
+              localField: "user",
+              foreignField: "_id",
+              as: "userProfile",
+            },
+          },
+          { $unwind: "$userProfile" },
+          {
+            $project: {
+              status: 1,
+              name: {
+                $concat: [
+                  { $ifNull: ["$userProfile.firstName", ""] },
+                  " ",
+                  { $ifNull: ["$userProfile.lastName", ""] },
+                ],
+              },
+              email: "$userProfile.email",
+              photo: "$userProfile.photo",
+              // You can use a virtual-like concatenation here if needed
+            },
+          },
+        ],
+        as: "guests",
       },
     },
-    { $unwind: "$allEvents" },
-    { $replaceRoot: { newRoot: "$allEvents" } },
-    // Sort by creation date
+    // 4. Add Fields for logic
+    {
+      $addFields: {
+        userResponse: {
+          $ifNull: [
+            { $arrayElemAt: ["$currentUserResponse.status", 0] },
+            "none",
+          ],
+        },
+        userRole: {
+          $cond: [
+            { $eq: ["$creator", user._id] },
+            "creator",
+            {
+              $cond: [
+                { $eq: ["$host.email", user.email] },
+                "host",
+                {
+                  $cond: [
+                    { $in: [user.email, { $ifNull: ["$cohosts.email", []] }] },
+                    "cohost",
+                    "guest",
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    },
     { $sort: { createdAt: -1 } },
-    // Pagination facet
+    // 5. Final Pagination Facet
     {
       $facet: {
         metadata: [{ $count: "total" }],
         data: [
           { $skip: skip },
           { $limit: limit },
-          {
-            $project: {
-              slug: 1,
-              title: 1,
-              startDate: 1,
-              endDate: 1,
-              eventType: 1,
-              image: 1,
-              category: 1,
-              host: 1,
-              cohosts: 1,
-              guests: 1,
-              createdAt: 1,
-              updatedAt: 1,
-              location: 1,
-              userRole: 1,
-              userResponse: 1,
-            },
-          },
+          { $project: { currentUserResponse: 0 } },
         ],
       },
     },
@@ -404,7 +428,9 @@ export const getMyEvents = catchAsync(async (req, res, _next) => {
   const events = results[0]?.data || [];
 
   // Format events using helper
-  const formattedEvents = events.map((event: any) => formatEventData(event));
+  const formattedEvents = events.map((event: any) =>
+    formatEventData(event, { skipGuests: true }),
+  );
 
   // Send response
   res.status(200).json({
