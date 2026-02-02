@@ -81,7 +81,7 @@ export const login = catchAsync(async (req, res, next) => {
   await user.save();
 
   // Add refresh token to response
-  //res.cookie("refresh-token", refreshToken, cookieConfig);
+  res.cookie("refresh-token", refreshToken, cookieConfig);
 
   // Send response
   res.status(200).json({
@@ -132,8 +132,7 @@ export const signup = catchAsync(async (req, res, next) => {
   await newUser.save();
 
   // Add refresh token to response
-  if (process.env.NODE_ENV === "prod")
-    res.cookie("refresh-token", refreshToken, cookieConfig);
+  res.cookie("refresh-token", refreshToken, cookieConfig);
 
   // Send response
   res.status(201).json({
@@ -163,7 +162,7 @@ export const logout = catchAsync(async (req, res, _next) => {
   }
   const { maxAge, ...rest } = cookieConfig;
   // Clear cookie
-  if (process.env.NODE_ENV === "prod") res.clearCookie("refresh-token", rest);
+  res.clearCookie("refresh-token", rest);
   // Send response
   res.sendStatus(204);
 });
