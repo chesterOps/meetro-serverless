@@ -133,7 +133,7 @@ export const chipin = catchAsync(async (req, res, next) => {
   }
 });
 
-export const withdrawSettledDonations = catchAsync(async (req, res, next) => {
+export const withdraw = catchAsync(async (req, res, next) => {
   const user = res.locals.user;
   const { eventId, amount } = req.body;
 

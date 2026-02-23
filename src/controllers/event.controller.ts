@@ -640,3 +640,102 @@ export const confirmAttendance = catchAsync(async (req, res, next) => {
     message: `Attendance marked as ${responseStatus}`,
   });
 });
+
+export const getAllGuests = catchAsync(async (req, res, next) => {
+  // Get event ID from params
+  const eventId = req.params.id;
+
+  // Check if eventId is valid ObjectId or slug
+  const isSlug = !isValidObjectId(eventId);
+
+  // Find event by ID or slug
+  let event;
+  if (isSlug) {
+    event = await Event.findOne({ slug: eventId });
+  } else {
+    event = await Event.findById(eventId);
+  }
+
+  // If event not found, return error
+  if (!event) return next(new AppError("Event not found", 404));
+
+  // Pagination
+  const page = parseInt(req.query.page as string) || 1;
+  const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
+  const skip = (page - 1) * limit;
+
+  // Optional filter by status (going, maybe, or all)
+  const statusFilter = (req.query.status as string) || "all";
+  let statusMatch: any = {};
+  if (statusFilter !== "all") {
+    statusMatch = { status: statusFilter };
+  }
+
+  // Use aggregation to fetch guests with pagination
+  const results = await Response.aggregate([
+    // 1. Match responses for this event
+    {
+      $match: {
+        event: event._id,
+        ...statusMatch,
+      },
+    },
+    // 2. Lookup user details
+    {
+      $lookup: {
+        from: "users",
+        localField: "user",
+        foreignField: "_id",
+        as: "userProfile",
+      },
+    },
+    // 3. Unwind user profile
+    { $unwind: "$userProfile" },
+    // 4. Project required fields
+    {
+      $project: {
+        _id: 1,
+        status: 1,
+        amountPaid: 1,
+        createdAt: 1,
+        user: {
+          _id: "$userProfile._id",
+          firstName: "$userProfile.firstName",
+          lastName: "$userProfile.lastName",
+          email: "$userProfile.email",
+          photo: "$userProfile.photo",
+        },
+      },
+    },
+    { $sort: { createdAt: -1 } },
+    // 5. Facet for metadata and data
+    {
+      $facet: {
+        metadata: [{ $count: "total" }],
+        data: [{ $skip: skip }, { $limit: limit }],
+      },
+    },
+  ]);
+
+  const totalGuests = results[0]?.metadata[0]?.total || 0;
+  const guests = results[0]?.data || [];
+
+  // Format guest data
+  const formattedGuests = guests.map((response: any) => ({
+    id: response._id,
+    status: response.status,
+    amountPaid: response.amountPaid || 0,
+    createdAt: response.createdAt,
+    user: formatGuestData(response.user),
+  }));
+
+  // Send response
+  res.status(200).json({
+    status: "success",
+    results: formattedGuests.length,
+    total: totalGuests,
+    page,
+    data: formattedGuests,
+    hasMore: page * limit < totalGuests,
+  });
+});

@@ -5,7 +5,7 @@ import {
   paystackWebhook,
   verifyBankAccount,
   verifyPayment,
-  withdrawSettledDonations,
+  withdraw,
 } from "../controllers/payment.controller";
 import { protect } from "../middlewares/auth.middleware";
 
@@ -18,7 +18,7 @@ paymentRouter.post("/verify-account", verifyBankAccount);
 paymentRouter.post("/chip-in", protect, chipin);
 
 // Protected route - withdraw settled donations
-paymentRouter.post("/withdraw", protect, withdrawSettledDonations);
+paymentRouter.post("/withdraw", protect, withdraw);
 
 // Protected route - get event transactions
 paymentRouter.get("/transactions", protect, getTransactions);

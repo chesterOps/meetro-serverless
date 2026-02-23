@@ -4,6 +4,7 @@ import {
   createEvent,
   deleteEvent,
   getEvent,
+  getAllGuests,
   getMyEvents,
   updateEvent,
 } from "../controllers/event.controller";
@@ -36,6 +37,8 @@ eventRouter.get("/my-events", protect, getMyEvents);
 
 eventRouter.post("/confirm-attendance", protect, confirmAttendance);
 
+eventRouter.get("/:id/guests", isLoggedIn, getAllGuests);
+
 eventRouter
   .route("/:id")
   .delete(protect, deleteEvent)
@@ -45,7 +48,7 @@ eventRouter
     upload.single("image"),
     uploadImage("image"),
     filter(...allowedFields),
-    updateEvent
+    updateEvent,
   );
 
 export default eventRouter;
