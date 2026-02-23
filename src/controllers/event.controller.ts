@@ -194,7 +194,11 @@ export const createEvent = catchAsync(async (req, res, next) => {
   await Promise.all(responsePromises);
 
   // Prepare response data
-  const eventData = formatEventData(event);
+  const eventData = formatEventData(event, {
+    skipGuests: true,
+    skipUpdateCount: true,
+    skipBalance: true,
+  });
 
   // Send response
   res.status(201).json({
@@ -246,6 +250,10 @@ export const getEvent = catchAsync(async (req, res, next) => {
     const eventDonations = await Donation.getTotalDonations(event._id);
     eventData.totalDonations = eventDonations ? eventDonations.totalAmount : 0;
   }
+
+  // Add guest count to response
+  const guestCount = await event.getGuestCount();
+  eventData.guestCount = guestCount;
 
   // Check if user exists
   if (user) {
@@ -415,7 +423,11 @@ export const getMyEvents = catchAsync(async (req, res, _next) => {
 
   // Format events using helper
   const formattedEvents = events.map((event: any) =>
-    formatEventData(event, { skipGuests: true }),
+    formatEventData(event, {
+      skipGuests: true,
+      skipBalance: user.id !== event.host.id,
+      skipUpdateCount: user.id !== event.host.id,
+    }),
   );
 
   // Send response

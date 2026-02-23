@@ -81,7 +81,7 @@ export const login = catchAsync(async (req, res, next) => {
   await user.save();
 
   // Add refresh token to response
-  res.cookie("refresh-token", refreshToken, cookieConfig);
+  // res.cookie("refresh-token", refreshToken, cookieConfig);
 
   // Send response
   res.status(200).json({

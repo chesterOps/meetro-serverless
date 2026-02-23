@@ -4,12 +4,12 @@ import { DEFAULT_EVENT_IMAGES } from "../utils/helpers";
 
 function createEventSlug(event: {
   title: string;
-  creator: mongoose.Types.ObjectId;
+  host: mongoose.Types.ObjectId;
 }) {
   return `${event.title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)+/g, "")}-${event.creator.toString().slice(-4)}`;
+    .replace(/(^-|-$)+/g, "")}-${event.host.toString().slice(-4)}`;
 }
 
 // Event interface
@@ -79,8 +79,12 @@ export interface IEvent {
   };
 }
 
+interface IEventMethods {
+  getGuestCount: () => Promise<number>;
+}
+
 // Event model type
-type EventModel = mongoose.Model<IEvent>;
+type EventModel = mongoose.Model<IEvent, {}, IEventMethods>;
 
 // Event schema
 const eventSchema = new mongoose.Schema<IEvent, EventModel>(
@@ -323,7 +327,7 @@ const eventSchema = new mongoose.Schema<IEvent, EventModel>(
 // Indexes for better query performance
 eventSchema.index({ startDate: 1 });
 eventSchema.index({ eventType: 1, startDate: 1 });
-eventSchema.index({ creator: 1 });
+eventSchema.index({ host: 1 });
 eventSchema.index({ category: 1 });
 eventSchema.index({ category: 1, startDate: 1 });
 eventSchema.index({ "location.state": 1 });
@@ -337,11 +341,10 @@ eventSchema.virtual("guests", {
   options: { limit: 10, sort: { createdAt: 1 } },
 });
 
-// Virtual to get the total number of guests
-eventSchema.virtual("guestCount").get(async function (this: IEvent) {
-  // Use the Response model to count guests for this event
+// Instance method to get the total number of guests asynchronously
+eventSchema.methods.getGuestCount = async function () {
   return await mongoose.model("Response").countDocuments({ event: this._id });
-});
+};
 
 // Virtual event status
 eventSchema.virtual("status").get(function (this: IEvent) {
@@ -354,7 +357,7 @@ eventSchema.virtual("status").get(function (this: IEvent) {
 // Populate host and cohosts on find queries
 eventSchema.pre(/^find/, async function (this: mongoose.Query<any, any>) {
   this.populate([
-    { path: "creator", select: "firstName lastName email photo" },
+    { path: "host", select: "firstName lastName email photo" },
     {
       path: "guests",
       select: "user status -event",
@@ -368,12 +371,12 @@ eventSchema.pre(/^find/, async function (this: mongoose.Query<any, any>) {
 });
 
 eventSchema.pre("save", async function () {
-  // Construct slug from title and creator ID
+  // Construct slug from title and user ID
   if (this.isNew) {
     const doc = this as any;
     doc.slug = `${createEventSlug({
       title: doc.title,
-      creator: doc.creator.toString(),
+      host: doc.host.toString(),
     })}`;
   }
 });
