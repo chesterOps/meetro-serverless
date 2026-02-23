@@ -345,7 +345,6 @@ export const getMyEvents = catchAsync(async (req, res, _next) => {
           { $unwind: "$userProfile" },
           {
             $project: {
-              status: 1,
               name: {
                 $concat: [
                   { $ifNull: ["$userProfile.firstName", ""] },
