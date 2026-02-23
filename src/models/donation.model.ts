@@ -15,9 +15,7 @@ export interface IDonation {
     gateway?: string;
     gatewayResponse?: any;
   };
-  isPayoutEligible: boolean;
   settledAt?: Date;
-  payoutStatus: "pending" | "paid" | "failed";
   fee: number;
   createdAt: Date;
   updatedAt: Date;
@@ -93,29 +91,16 @@ const donationSchema = new mongoose.Schema<
       },
       default: "pending",
     },
-    payoutStatus: {
-      type: String,
-      enum: {
-        values: ["pending", "paid", "failed"],
-        message: "Invalid payout status",
-      },
-      default: "pending",
-    },
     paymentReference: {
       type: String,
       trim: true,
       unique: true,
       sparse: true,
     },
-
     metadata: {
       transactionId: String,
       gateway: String,
       gatewayResponse: mongoose.Schema.Types.Mixed,
-    },
-    isPayoutEligible: {
-      type: Boolean,
-      default: false,
     },
   },
   {
@@ -131,7 +116,6 @@ donationSchema.index({ status: 1 });
 donationSchema.index({ createdAt: -1 });
 donationSchema.index({ userId: 1, status: 1 });
 donationSchema.index({ event: 1, status: 1 });
-donationSchema.index({ payoutStatus: 1, status: 1 });
 
 // Instance method to check if donation is refundable
 donationSchema.methods.isRefundable = function (): boolean {

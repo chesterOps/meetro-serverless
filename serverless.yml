@@ -6,7 +6,7 @@ service: meetro-server
 provider:
   stage: ${opt:stage, "prod"}
   name: aws
-  profile: "chester"
+  profile: "meetro"
   runtime: nodejs20.x
   timeout: 30 # Increase to 30 seconds
   memorySize: 512 # Tip: Higher memory = Faster CPU = Faster connection

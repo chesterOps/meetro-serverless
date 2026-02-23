@@ -5,6 +5,7 @@ export interface IResponse {
   event: mongoose.Types.ObjectId;
   user: mongoose.Types.ObjectId;
   status: "going" | "maybe";
+  amountPaid?: number;
 }
 
 // Response model type
@@ -30,6 +31,11 @@ const responseSchema = new mongoose.Schema<IResponse, ResponseModel>(
         message: "Status must be going or maybe",
       },
       required: [true, "Response status is required"],
+    },
+    amountPaid: {
+      type: Number,
+      default: 0,
+      min: [0, "Amount paid must be non-negative"],
     },
   },
   {

@@ -1,7 +1,8 @@
+import { paystack } from "../paystack/paystackSettlementPoller";
 import crypto from "crypto";
 import Donation from "../models/donation.model";
 import Event from "../models/event.model";
-import { paystack } from "../paystack/paystackSettlementPoller";
+import Withdrawal from "../models/withdrawal.model";
 import AppError from "../utils/appError";
 import catchAsync from "../utils/catchAsync";
 
@@ -98,9 +99,10 @@ export const chipin = catchAsync(async (req, res, next) => {
   }
   try {
     // Create paystack payment link
+    const totalAmountKobo = Math.round((Number(amount) + donation.fee) * 100);
     const response = await paystack.post("/transaction/initialize", {
       email,
-      amount: (Number(amount) + donation.fee) * 100, // Amount in kobo
+      amount: totalAmountKobo, // Amount in kobo
       reference: paymentReference,
       callback_url: `${process.env.FRONT_URL}/verify-payment`,
       metadata: {
@@ -131,6 +133,198 @@ export const chipin = catchAsync(async (req, res, next) => {
   }
 });
 
+export const withdrawSettledDonations = catchAsync(async (req, res, next) => {
+  const user = res.locals.user;
+  const { eventId, amount } = req.body;
+
+  if (!eventId) {
+    return next(new AppError("Event ID is required", 400));
+  }
+
+  if (!amount || Number(amount) <= 0) {
+    return next(new AppError("Withdrawal amount must be positive", 400));
+  }
+
+  const event = await Event.findById(eventId).select(
+    "host chipInDetails title balance",
+  );
+
+  if (!event) return next(new AppError("Event not found", 404));
+
+  if (event.host.toString() !== user._id.toString()) {
+    return next(
+      new AppError(
+        "You do not have permission to withdraw donations for this event.",
+        403,
+      ),
+    );
+  }
+
+  if (!event.chipInDetails?.bankDetails?.recipientCode) {
+    return next(
+      new AppError(
+        "Event bank details are incomplete. Please update event bank details.",
+        400,
+      ),
+    );
+  }
+
+  const requestedPayout = Number(amount);
+  const requestedPayoutKobo = Math.round(requestedPayout * 100);
+
+  if (!Number.isFinite(requestedPayout) || requestedPayout <= 0) {
+    return next(new AppError("Withdrawal amount must be positive", 400));
+  }
+
+  if (!event.balance || event.balance <= 0) {
+    return next(new AppError("No available balance for withdrawal", 400));
+  }
+
+  if (requestedPayout > event.balance) {
+    return next(
+      new AppError(
+        `Requested amount exceeds available balance. Available: ${event.balance.toFixed(2)}`,
+        400,
+      ),
+    );
+  }
+
+  const reservedEvent = await Event.findOneAndUpdate(
+    { _id: event._id, balance: { $gte: requestedPayout } },
+    { $inc: { balance: -requestedPayout } },
+    { new: true },
+  );
+
+  if (!reservedEvent) {
+    return next(new AppError("Insufficient balance for withdrawal", 400));
+  }
+
+  const payoutReference = `PAYOUT_${Date.now()}_${crypto
+    .randomBytes(8)
+    .toString("hex")}`;
+
+  let transferResponse;
+  try {
+    transferResponse = await paystack.post("/transfer", {
+      source: "balance",
+      amount: requestedPayoutKobo,
+      recipient: event.chipInDetails.bankDetails.recipientCode,
+      reason: `Event payout for ${event.title}`,
+      reference: payoutReference,
+    });
+  } catch (error: any) {
+    await Event.updateOne(
+      { _id: event._id },
+      { $inc: { balance: requestedPayout } },
+    );
+    return next(
+      new AppError(error.response?.data?.message || error.message, 500),
+    );
+  }
+
+  if (!transferResponse.data?.status) {
+    return next(new AppError("Failed to initiate payout transfer", 500));
+  }
+
+  const transferCode =
+    transferResponse.data?.data?.transfer_code ||
+    transferResponse.data?.data?.reference ||
+    payoutReference;
+  const transferStatus = transferResponse.data?.data?.status;
+  const payoutStatus = transferStatus === "success" ? "paid" : "pending";
+
+  await Withdrawal.create({
+    event: event._id,
+    userId: user._id,
+    amount: requestedPayout,
+    currency: "NGN",
+    status: payoutStatus,
+    reference: payoutReference,
+    transferCode,
+    gateway: "paystack",
+  });
+
+  res.status(200).json({
+    status: "success",
+    data: {
+      eventId: event._id,
+      payoutAmount: requestedPayout,
+      payoutReference: transferCode,
+      balance: reservedEvent.balance,
+    },
+    message: "Payout initiated successfully",
+  });
+});
+
+export const getTransactions = catchAsync(async (req, res, next) => {
+  const user = res.locals.user;
+  const { eventId } = req.query;
+
+  if (!eventId) {
+    return next(new AppError("Event ID is required", 400));
+  }
+
+  const event = await Event.findById(eventId).select("host");
+
+  if (!event) return next(new AppError("Event not found", 404));
+
+  if (event.host.toString() !== user._id.toString()) {
+    return next(
+      new AppError(
+        "You do not have permission to view transactions for this event.",
+        403,
+      ),
+    );
+  }
+
+  const page = Math.max(parseInt(req.query.page as string) || 1, 1);
+  const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
+  const skip = (page - 1) * limit;
+
+  const [chipIns, withdrawals] = await Promise.all([
+    Donation.find({ event: event._id }).sort({ createdAt: -1, _id: -1 }).lean(),
+    Withdrawal.find({ event: event._id })
+      .sort({ createdAt: -1, _id: -1 })
+      .lean(),
+  ]);
+
+  const combined = [
+    ...chipIns.map((donation: any) => ({
+      type: "credit",
+      date: donation.createdAt,
+      donation,
+    })),
+    ...withdrawals.map((withdrawal: any) => ({
+      type: "withdrawal",
+      date: withdrawal.createdAt,
+      withdrawal,
+    })),
+  ];
+
+  combined.sort((a, b) => {
+    const aTime = a.date ? new Date(a.date).getTime() : 0;
+    const bTime = b.date ? new Date(b.date).getTime() : 0;
+    if (bTime !== aTime) return bTime - aTime;
+    return 0;
+  });
+
+  const total = combined.length;
+  const paged = combined.slice(skip, skip + limit);
+
+  res.status(200).json({
+    status: "success",
+    data: {
+      transactions: paged,
+    },
+    pagination: {
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    },
+  });
+});
+
 export const verifyPayment = catchAsync(async (req, res, next) => {
   //  Get reference from query parameters
   const { reference } = req.query;
@@ -156,10 +350,11 @@ export const verifyPayment = catchAsync(async (req, res, next) => {
     const paymentType = paymentData.metadata.type;
 
     // Validate payment amount matches expected amount
-    const expectedAmount =
+    const expectedAmount = Math.round(
       (paymentData.metadata.originalAmount +
         paymentData.metadata.transaction_fee) *
-      100;
+        100,
+    );
     if (paymentData.amount !== expectedAmount) {
       return next(new AppError("Payment amount mismatch", 400));
     }

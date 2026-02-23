@@ -1,7 +1,6 @@
 import mongoose from "mongoose";
 import { deleteImage } from "../middlewares/image";
 import { DEFAULT_EVENT_IMAGES } from "../utils/helpers";
-import Donation from "./donation.model";
 
 function createEventSlug(event: {
   title: string;
@@ -47,15 +46,13 @@ export interface IEvent {
 
   eventType: "online" | "offline";
   meetingURL?: string;
-  host: {
-    name: string;
-    email: string;
-    photo?: string;
-  };
+  host: mongoose.Types.ObjectId;
   cohosts: {
-    name: string;
-    email: string;
+    name?: string;
+    email?: string;
     photo?: string;
+    id?: mongoose.Types.ObjectId;
+    role: string;
   }[];
   image: {
     public_id?: string;
@@ -64,11 +61,11 @@ export interface IEvent {
   category: string[];
   isPrivate: boolean;
   isFeatured: boolean;
-  creator: mongoose.Types.ObjectId;
   dressCode: {
     type: string;
     details?: string;
   };
+  balance: number;
   updateCount: number;
   slug: string;
   socials?: {
@@ -209,17 +206,9 @@ const eventSchema = new mongoose.Schema<IEvent, EventModel>(
       type: Boolean,
       default: true,
     },
-    creator: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: [true, "Event creator is required"],
-    },
     host: {
-      type: {
-        name: String,
-        email: String,
-        photo: String,
-      },
+      type: mongoose.Types.ObjectId,
+      ref: "User",
       required: [true, "Event host is required"],
     },
     cohosts: {
@@ -228,6 +217,8 @@ const eventSchema = new mongoose.Schema<IEvent, EventModel>(
           name: String,
           email: String,
           photo: String,
+          role: String,
+          id: mongoose.Types.ObjectId,
         },
       ],
       default: [],
@@ -253,7 +244,12 @@ const eventSchema = new mongoose.Schema<IEvent, EventModel>(
     updateCount: {
       type: Number,
       default: 0,
+    },
+    balance: {
+      type: Number,
+      default: 0,
       select: false,
+      min: [0, "Balance cannot be negative"],
     },
     chipInDetails: {
       type: {
@@ -333,11 +329,18 @@ eventSchema.index({ category: 1, startDate: 1 });
 eventSchema.index({ "location.state": 1 });
 eventSchema.index({ isFeatured: 1 });
 
-// Virtual to populate guests from Response model
+// Virtual to populate only the first 10 guests from Response model, sorted by creation time (oldest first)
 eventSchema.virtual("guests", {
   ref: "Response",
   localField: "_id",
   foreignField: "event",
+  options: { limit: 10, sort: { createdAt: 1 } },
+});
+
+// Virtual to get the total number of guests
+eventSchema.virtual("guestCount").get(async function (this: IEvent) {
+  // Use the Response model to count guests for this event
+  return await mongoose.model("Response").countDocuments({ event: this._id });
 });
 
 // Virtual event status
@@ -348,20 +351,19 @@ eventSchema.virtual("status").get(function (this: IEvent) {
   return "completed";
 });
 
-// Virtual donations details
-eventSchema.virtual("donations").get(async function (this: IEvent) {
-  if (this.chipInDetails) {
-    const eventDonations = await Donation.getTotalDonations(this._id);
-    return eventDonations;
-  }
-  return null;
-});
-
 // Populate host and cohosts on find queries
 eventSchema.pre(/^find/, async function (this: mongoose.Query<any, any>) {
   this.populate([
     { path: "creator", select: "firstName lastName email photo" },
-    { path: "guests", select: "user status -event" },
+    {
+      path: "guests",
+      select: "user status -event",
+      options: { limit: 10, sort: { createdAt: 1 } },
+    },
+    {
+      path: "cohosts.id",
+      select: "firstName lastName email photo",
+    },
   ]);
 });
 

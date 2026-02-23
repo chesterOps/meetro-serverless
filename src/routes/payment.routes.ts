@@ -1,9 +1,11 @@
 import express from "express";
 import {
   chipin,
+  getTransactions,
   paystackWebhook,
   verifyBankAccount,
   verifyPayment,
+  withdrawSettledDonations,
 } from "../controllers/payment.controller";
 import { protect } from "../middlewares/auth.middleware";
 
@@ -14,6 +16,12 @@ paymentRouter.post("/verify-account", verifyBankAccount);
 
 // Protected route - chip in to event
 paymentRouter.post("/chip-in", protect, chipin);
+
+// Protected route - withdraw settled donations
+paymentRouter.post("/withdraw", protect, withdrawSettledDonations);
+
+// Protected route - get event transactions
+paymentRouter.get("/transactions", protect, getTransactions);
 
 paymentRouter.get("/verify-payment", verifyPayment);
 
