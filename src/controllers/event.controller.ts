@@ -385,8 +385,8 @@ export const getMyEvents = catchAsync(async (req, res, _next) => {
         },
         userRole: {
           $cond: [
-            { $eq: ["$creator", user._id] },
-            "creator",
+            { $eq: ["$host", user._id] },
+            "host",
             {
               $cond: [
                 { $eq: ["$host.id", user._id] },
@@ -421,14 +421,28 @@ export const getMyEvents = catchAsync(async (req, res, _next) => {
   const totalEvents = results[0]?.metadata[0]?.total || 0;
   const events = results[0]?.data || [];
 
-  // Format events using helper
-  const formattedEvents = events.map((event: any) =>
-    formatEventData(event, {
+  // Format events using helper and add status
+  // const now = new Date(); // Removed duplicate declaration
+  const formattedEvents = events.map((event: any) => {
+    const eventData = formatEventData(event, {
       skipGuests: true,
       skipBalance: user.id !== event.host.id,
       skipUpdateCount: user.id !== event.host.id,
-    }),
-  );
+    });
+    let status = "upcoming";
+    if (event.startDate && event.endDate) {
+      const start = new Date(event.startDate);
+      const end = new Date(event.endDate);
+      if (now < start) {
+        status = "upcoming";
+      } else if (now >= start && now <= end) {
+        status = "ongoing";
+      } else if (now > end) {
+        status = "past";
+      }
+    }
+    return { ...eventData, status };
+  });
 
   // Send response
   res.status(200).json({
