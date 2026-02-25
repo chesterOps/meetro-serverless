@@ -37,12 +37,14 @@ eventRouter.get("/my-events", protect, getMyEvents);
 
 eventRouter.post("/confirm-attendance", protect, confirmAttendance);
 
-eventRouter.get("/:id/guests", isLoggedIn, getAllGuests);
+eventRouter.get("/:id/guests", protect, getAllGuests);
+
+eventRouter.get("/:id/protected", protect, getEvent(true));
 
 eventRouter
   .route("/:id")
   .delete(protect, deleteEvent)
-  .get(isLoggedIn, getEvent)
+  .get(isLoggedIn, getEvent())
   .patch(
     protect,
     upload.single("image"),

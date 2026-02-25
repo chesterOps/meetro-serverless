@@ -47,7 +47,14 @@ const formatEventData = (
   // Format guests to include user details
   if (!options?.skipGuests && eventObj.guests && eventObj.guests.length > 0) {
     eventObj.guests = eventObj.guests.map((guest: any) => {
-      return formatGuestData(guest.user);
+      const user = formatGuestData(guest.user);
+
+      if (!options?.skipBalance) {
+        user.amountPaid = guest.amountPaid || 0;
+        user.date = guest.createdAt;
+        user.status = guest.status;
+      }
+      return user;
     });
   }
   return eventObj;
@@ -207,76 +214,85 @@ export const createEvent = catchAsync(async (req, res, next) => {
   });
 });
 
-export const getEvent = catchAsync(async (req, res, next) => {
-  let user;
-  // Get user from res.locals if authenticated
-  if (res.locals.user) user = res.locals.user;
+export const getEvent = (isProtected = false) =>
+  catchAsync(async (req, res, next) => {
+    let user;
+    // Get user from res.locals if authenticated
+    if (res.locals.user) user = res.locals.user;
 
-  // Get event ID from params
-  const eventId = req.params.id;
+    // Get event ID from params
+    const eventId = req.params.id;
 
-  // Check if eventId is slug
-  const isSlug = !isValidObjectId(eventId);
+    // Check if eventId is slug
+    const isSlug = !isValidObjectId(eventId);
 
-  // Find event by ID or slug
-  let event;
-  // If slug, find by slug
-  if (isSlug) {
-    event = await Event.findOne({ slug: eventId }).select(
-      "+updateCount +balance",
-    );
-  } else {
-    event = await Event.findById(eventId).select("+updateCount +balance");
-  }
-  // If event not found, return error
-  if (!event) return next(new AppError("Event not found", 404));
+    // Find event by ID or slug
+    let event;
+    // If slug, find by slug
+    if (isSlug) {
+      event = await Event.findOne({ slug: eventId }).select(
+        "+updateCount +balance",
+      );
+    } else {
+      event = await Event.findById(eventId).select("+updateCount +balance");
+    }
+    // If event not found, return error
+    if (!event) return next(new AppError("Event not found", 404));
 
-  // Check if user exists and is host
-  const isHost = user && event.host._id.toString() === user._id.toString();
-  const isCohost =
-    user &&
-    event.cohosts.some(
-      (cohost: any) => cohost.id?.toString() === user._id.toString(),
-    );
+    if (isProtected && user._id.toString() !== event.host._id.toString()) {
+      return next(
+        new AppError("You do not have permission to view this event.", 403),
+      );
+    }
 
-  // Format event data - hide balance from non-hosts
-  const eventData = formatEventData(event, {
-    skipUpdateCount: !isHost,
-    skipBalance: !isHost,
-  });
+    // Check if user exists and is host
+    const isHost = user && event.host._id.toString() === user._id.toString();
+    const isCohost =
+      user &&
+      event.cohosts.some(
+        (cohost: any) => cohost.id?.toString() === user._id.toString(),
+      );
 
-  // If user is host, add total donations to response
-  if (isHost) {
-    const eventDonations = await Donation.getTotalDonations(event._id);
-    eventData.totalDonations = eventDonations ? eventDonations.totalAmount : 0;
-  }
-
-  // Add guest count to response
-  const guestCount = await event.getGuestCount();
-  eventData.guestCount = guestCount;
-
-  // Check if user exists
-  if (user) {
-    if (isHost) eventData.userRole = "host";
-    else if (isCohost) eventData.userRole = "cohost";
-    else eventData.userRole = "guest";
-
-    // Find user's response to the event
-    const userResponse = await Response.findOne({
-      user: user._id,
-      event: event._id,
+    // Format event data - hide balance from non-hosts
+    const eventData = formatEventData(event, {
+      skipUpdateCount: !isHost,
+      skipBalance: !isHost,
     });
 
-    // If user has responded, add response status
-    if (userResponse) eventData.userResponse = userResponse.status;
-  }
+    // If user is host, add total donations to response
+    if (isHost) {
+      const eventDonations = await Donation.getTotalDonations(event._id);
+      eventData.totalDonations = eventDonations
+        ? eventDonations.totalAmount
+        : 0;
+    }
 
-  // Send response
-  res.status(200).json({
-    status: "success",
-    data: eventData,
+    // Add guest count to response
+    const guestCount = await event.getGuestCount();
+    eventData.guestCount = guestCount;
+
+    // Check if user exists
+    if (user) {
+      if (isHost) eventData.userRole = "host";
+      else if (isCohost) eventData.userRole = "cohost";
+      else eventData.userRole = "guest";
+
+      // Find user's response to the event
+      const userResponse = await Response.findOne({
+        user: user._id,
+        event: event._id,
+      });
+
+      // If user has responded, add response status
+      if (userResponse) eventData.userResponse = userResponse.status;
+    }
+
+    // Send response
+    res.status(200).json({
+      status: "success",
+      data: eventData,
+    });
   });
-});
 
 export const getMyEvents = catchAsync(async (req, res, _next) => {
   // Get user from res.locals
@@ -667,6 +683,7 @@ export const confirmAttendance = catchAsync(async (req, res, next) => {
 });
 
 export const getAllGuests = catchAsync(async (req, res, next) => {
+  const user = res.locals.user;
   // Get event ID from params
   const eventId = req.params.id;
 
@@ -684,16 +701,24 @@ export const getAllGuests = catchAsync(async (req, res, next) => {
   // If event not found, return error
   if (!event) return next(new AppError("Event not found", 404));
 
+  // Check if user is host
+  if (event.host._id.toString() !== user._id.toString()) {
+    return next(
+      new AppError("You do not have permission to view this resource.", 403),
+    );
+  }
+
   // Pagination
   const page = parseInt(req.query.page as string) || 1;
   const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
   const skip = (page - 1) * limit;
 
-  // Optional filter by status (going, maybe, or all)
-  const statusFilter = (req.query.status as string) || "all";
-  let statusMatch: any = {};
-  if (statusFilter !== "all") {
-    statusMatch = { status: statusFilter };
+  // Search and sort
+  const search = (req.query.search as string) || "";
+  const sortField = (req.query.sort as string) || "date"; // 'amount' or 'date'
+  let sortObj: any = { createdAt: -1 };
+  if (sortField === "amount") {
+    sortObj = { amountPaid: -1 };
   }
 
   // Use aggregation to fetch guests with pagination
@@ -702,7 +727,6 @@ export const getAllGuests = catchAsync(async (req, res, next) => {
     {
       $match: {
         event: event._id,
-        ...statusMatch,
       },
     },
     // 2. Lookup user details
@@ -716,7 +740,35 @@ export const getAllGuests = catchAsync(async (req, res, next) => {
     },
     // 3. Unwind user profile
     { $unwind: "$userProfile" },
-    // 4. Project required fields
+    // 4. Search filter (if provided)
+    ...(search
+      ? [
+          {
+            $match: {
+              $or: [
+                { "userProfile.firstName": { $regex: search, $options: "i" } },
+                { "userProfile.lastName": { $regex: search, $options: "i" } },
+                {
+                  $expr: {
+                    $regexMatch: {
+                      input: {
+                        $concat: [
+                          "$userProfile.firstName",
+                          " ",
+                          "$userProfile.lastName",
+                        ],
+                      },
+                      regex: search,
+                      options: "i",
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        ]
+      : []),
+    // 5. Project required fields
     {
       $project: {
         _id: 1,
@@ -732,8 +784,8 @@ export const getAllGuests = catchAsync(async (req, res, next) => {
         },
       },
     },
-    { $sort: { createdAt: -1 } },
-    // 5. Facet for metadata and data
+    { $sort: sortObj },
+    // 6. Facet for metadata and data
     {
       $facet: {
         metadata: [{ $count: "total" }],
@@ -745,14 +797,31 @@ export const getAllGuests = catchAsync(async (req, res, next) => {
   const totalGuests = results[0]?.metadata[0]?.total || 0;
   const guests = results[0]?.data || [];
 
+  // Count guests by status (going, maybe)
+  let goingCount = 0;
+  let maybeCount = 0;
+  if (guests && guests.length > 0) {
+    for (const g of guests) {
+      if (g.status === "going") goingCount++;
+      else if (g.status === "maybe") maybeCount++;
+    }
+  }
+
   // Format guest data
-  const formattedGuests = guests.map((response: any) => ({
-    id: response._id,
-    status: response.status,
-    amountPaid: response.amountPaid || 0,
-    createdAt: response.createdAt,
-    user: formatGuestData(response.user),
-  }));
+  const formattedGuests = guests.map((response: any) => {
+    const user = formatGuestData(response.user);
+
+    return {
+      id: response._id,
+      status: response.status,
+      amountPaid: response.amountPaid || 0,
+      date: response.createdAt,
+      ...user,
+    };
+  });
+
+  // Calculate total pages
+  const totalPages = Math.ceil(totalGuests / limit);
 
   // Send response
   res.status(200).json({
@@ -760,7 +829,10 @@ export const getAllGuests = catchAsync(async (req, res, next) => {
     results: formattedGuests.length,
     total: totalGuests,
     page,
+    totalPages,
     data: formattedGuests,
     hasMore: page * limit < totalGuests,
+    goingCount,
+    maybeCount,
   });
 });

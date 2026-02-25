@@ -360,7 +360,7 @@ eventSchema.pre(/^find/, async function (this: mongoose.Query<any, any>) {
     { path: "host", select: "firstName lastName email photo" },
     {
       path: "guests",
-      select: "user status -event",
+      select: "user status -event createdAt",
       options: { limit: 10, sort: { createdAt: 1 } },
     },
     {
