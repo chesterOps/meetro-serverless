@@ -1,6 +1,5 @@
 import axios from "axios";
-import Donation from "../models/donation.model";
-import Event from "../models/event.model";
+import Transaction from "../models/transaction.model";
 import Job from "../models/job.model";
 import { connectToDatabase } from "../config/db";
 
@@ -115,55 +114,31 @@ async function runPaystackSettlementReconcile() {
           continue;
         }
 
-        // Batch query donations by references that haven't been settled yet
-        const donations = await Donation.find({
+        // Batch query transactions by references that haven't been settled yet
+        const transactions = await Transaction.find({
           paymentReference: { $in: references },
-          "metadata.gateway": "paystack",
+          type: "chip-in",
+          gateway: "paystack",
           status: "completed",
           settledAt: { $exists: false },
         });
 
-        // Update donations using bulkWrite for better performance
-        if (donations.length > 0) {
+        // Update transactions using bulkWrite for better performance
+        if (transactions.length > 0) {
           const now = new Date();
-          const bulkOps = donations.map((donation) => ({
+          const bulkOps = transactions.map((transaction) => ({
             updateOne: {
-              filter: { _id: donation._id },
+              filter: { _id: transaction._id },
               update: {
                 settledAt: now,
               },
             },
           }));
 
-          // Calculate net amounts for each event
-          const balanceByEvent = new Map<string, number>();
-          donations.forEach((donation) => {
-            const netAmount = donation.amount - donation.fee;
-            if (netAmount <= 0) return;
-            const eventId = donation.event.toString();
-            balanceByEvent.set(
-              eventId,
-              (balanceByEvent.get(eventId) || 0) + netAmount,
-            );
-          });
+          // Execute bulk update for transactions
+          await Transaction.bulkWrite(bulkOps);
 
-          // Execute bulk update for donations and event balances
-          await Donation.bulkWrite(bulkOps);
-
-          // Increment event balances for settled donations
-          if (balanceByEvent.size > 0) {
-            const balanceOps = Array.from(balanceByEvent.entries()).map(
-              ([eventId, amount]) => ({
-                updateOne: {
-                  filter: { _id: eventId },
-                  update: { $inc: { balance: amount } },
-                },
-              }),
-            );
-            await Event.bulkWrite(balanceOps);
-          }
-
-          totalReconciled += donations.length;
+          totalReconciled += transactions.length;
         }
 
         // Update tickets or other related models if needed here

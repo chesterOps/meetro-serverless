@@ -1,8 +1,7 @@
 import { paystack } from "../paystack/paystackSettlementPoller";
 import crypto from "crypto";
-import Donation from "../models/donation.model";
+import Transaction from "../models/transaction.model";
 import Event from "../models/event.model";
-import Withdrawal from "../models/withdrawal.model";
 import AppError from "../utils/appError";
 import catchAsync from "../utils/catchAsync";
 
@@ -85,21 +84,25 @@ export const chipin = catchAsync(async (req, res, next) => {
     return next(new AppError("Amount must be positive", 400));
   }
 
-  // Create donation
-  const donation = await Donation.create({
+  // Create transaction
+  const transaction = await Transaction.create({
     event: eventId,
     userId: user._id,
+    type: "chip-in",
     amount,
     paymentReference,
+    gateway: "paystack",
   });
 
-  // Check if donation was created successfully
-  if (!donation) {
-    return next(new AppError("Failed to create donation", 500));
+  // Check if transaction was created successfully
+  if (!transaction) {
+    return next(new AppError("Failed to create transaction", 500));
   }
   try {
     // Create paystack payment link
-    const totalAmountKobo = Math.round((Number(amount) + donation.fee) * 100);
+    const totalAmountKobo = Math.round(
+      (Number(amount) + transaction.fee!) * 100,
+    );
     const response = await paystack.post("/transaction/initialize", {
       email,
       amount: totalAmountKobo, // Amount in kobo
@@ -107,7 +110,7 @@ export const chipin = catchAsync(async (req, res, next) => {
       callback_url: `${process.env.FRONT_URL}/verify-payment`,
       metadata: {
         eventId: eventId,
-        transaction_fee: donation.fee,
+        transaction_fee: transaction.fee,
         originalAmount: Number(amount),
         type: "chipin",
       },
@@ -146,7 +149,7 @@ export const withdraw = catchAsync(async (req, res, next) => {
   }
 
   const event = await Event.findById(eventId).select(
-    "host chipInDetails title balance",
+    "host chipInDetails title",
   );
 
   if (!event) return next(new AppError("Event not found", 404));
@@ -176,27 +179,20 @@ export const withdraw = catchAsync(async (req, res, next) => {
     return next(new AppError("Withdrawal amount must be positive", 400));
   }
 
-  if (!event.balance || event.balance <= 0) {
+  // Calculate current balance from transactions
+  const currentBalance = await Transaction.getEventBalance(eventId);
+
+  if (!currentBalance || currentBalance <= 0) {
     return next(new AppError("No available balance for withdrawal", 400));
   }
 
-  if (requestedPayout > event.balance) {
+  if (requestedPayout > currentBalance) {
     return next(
       new AppError(
-        `Requested amount exceeds available balance. Available: ${event.balance.toFixed(2)}`,
+        `Requested amount exceeds available balance. Available: ${currentBalance.toFixed(2)}`,
         400,
       ),
     );
-  }
-
-  const reservedEvent = await Event.findOneAndUpdate(
-    { _id: event._id, balance: { $gte: requestedPayout } },
-    { $inc: { balance: -requestedPayout } },
-    { new: true },
-  );
-
-  if (!reservedEvent) {
-    return next(new AppError("Insufficient balance for withdrawal", 400));
   }
 
   const payoutReference = `PAYOUT_${Date.now()}_${crypto
@@ -213,10 +209,6 @@ export const withdraw = catchAsync(async (req, res, next) => {
       reference: payoutReference,
     });
   } catch (error: any) {
-    await Event.updateOne(
-      { _id: event._id },
-      { $inc: { balance: requestedPayout } },
-    );
     return next(
       new AppError(error.response?.data?.message || error.message, 500),
     );
@@ -231,18 +223,29 @@ export const withdraw = catchAsync(async (req, res, next) => {
     transferResponse.data?.data?.reference ||
     payoutReference;
   const transferStatus = transferResponse.data?.data?.status;
-  const payoutStatus = transferStatus === "success" ? "paid" : "pending";
+  const payoutStatus = transferStatus === "success" ? "completed" : "pending";
 
-  await Withdrawal.create({
+  // Create withdrawal transaction
+  await Transaction.create({
     event: event._id,
     userId: user._id,
+    type: "withdrawal",
     amount: requestedPayout,
     currency: "NGN",
     status: payoutStatus,
     reference: payoutReference,
     transferCode,
     gateway: "paystack",
+    bankDetails: {
+      accountName: event.chipInDetails.bankDetails.accountName,
+      accountNumber: event.chipInDetails.bankDetails.accountNumber,
+      bankName: event.chipInDetails.bankDetails.bankName,
+      bankCode: event.chipInDetails.bankDetails.bankCode,
+    },
   });
+
+  // Calculate new balance
+  const newBalance = await Transaction.getEventBalance(eventId);
 
   res.status(200).json({
     status: "success",
@@ -250,7 +253,7 @@ export const withdraw = catchAsync(async (req, res, next) => {
       eventId: event._id,
       payoutAmount: requestedPayout,
       payoutReference: transferCode,
-      balance: reservedEvent.balance,
+      balance: newBalance,
     },
     message: "Payout initiated successfully",
   });
@@ -281,31 +284,77 @@ export const getTransactions = catchAsync(async (req, res, next) => {
   const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
   const skip = (page - 1) * limit;
 
-  const [chipIns, withdrawals] = await Promise.all([
-    Donation.find({ event: event._id }).sort({ createdAt: -1, _id: -1 }).lean(),
-    Withdrawal.find({ event: event._id })
-      .sort({ createdAt: -1, _id: -1 })
-      .lean(),
-  ]);
+  // Get search and sort parameters
+  const search = (req.query.search as string)?.trim().toLowerCase() || "";
+  const sortBy = (req.query.sortBy as string) || "date"; // date, amount
+  const sortOrder = (req.query.sortOrder as string) || "desc"; // asc, desc
 
-  const combined = [
-    ...chipIns.map((donation: any) => ({
-      type: "credit",
-      date: donation.createdAt,
-      donation,
-    })),
-    ...withdrawals.map((withdrawal: any) => ({
-      type: "withdrawal",
-      date: withdrawal.createdAt,
-      withdrawal,
-    })),
-  ];
+  // Fetch all transactions from the unified model
+  const transactions = await Transaction.find({ event: event._id })
+    .populate({ path: "userId", select: "firstName lastName email" })
+    .sort({ createdAt: -1, _id: -1 })
+    .lean();
 
+  let combined = transactions.map((transaction: any) => {
+    if (transaction.type === "chip-in") {
+      return {
+        user: transaction.userId
+          ? `${transaction.userId.firstName} ${transaction.userId.lastName}`
+          : transaction.userId?.email || "Unknown User",
+        amount: transaction.amount,
+        date: transaction.createdAt,
+        type: "credit",
+        paymentFor: "chip-in",
+        status:
+          transaction.status === "completed"
+            ? "successful"
+            : transaction.status,
+      };
+    } else {
+      return {
+        bank: transaction.bankDetails?.bankName || "N/A",
+        accountNumber: transaction.bankDetails?.accountNumber
+          ? `xxxxxx${transaction.bankDetails.accountNumber.slice(-4)}`
+          : "N/A",
+        amount: transaction.amount,
+        date: transaction.createdAt,
+        type: "withdrawal",
+        status:
+          transaction.status === "completed"
+            ? "successful"
+            : transaction.status,
+      };
+    }
+  });
+
+  // Search functionality
+  if (search) {
+    combined = combined.filter((transaction: any) => {
+      const searchLower = search.toLowerCase();
+
+      // Search in user name (for credit transactions)
+      if (transaction.type === "credit" && transaction.user) {
+        if (transaction.user.toLowerCase().includes(searchLower)) return true;
+      }
+
+      return false;
+    });
+  }
+
+  // Sort functionality
   combined.sort((a, b) => {
-    const aTime = a.date ? new Date(a.date).getTime() : 0;
-    const bTime = b.date ? new Date(b.date).getTime() : 0;
-    if (bTime !== aTime) return bTime - aTime;
-    return 0;
+    let comparison = 0;
+
+    if (sortBy === "amount") {
+      comparison = a.amount - b.amount;
+    } else {
+      // Default sort by date
+      const aTime = a.date ? new Date(a.date).getTime() : 0;
+      const bTime = b.date ? new Date(b.date).getTime() : 0;
+      comparison = aTime - bTime;
+    }
+
+    return sortOrder === "asc" ? comparison : -comparison;
   });
 
   const total = combined.length;
@@ -365,29 +414,29 @@ export const verifyPayment = catchAsync(async (req, res, next) => {
     switch (paymentType) {
       case "chipin":
         // Check if already processed (idempotency)
-        const existingDonation = await Donation.findOne({
+        const existingTransaction = await Transaction.findOne({
           paymentReference: reference,
         });
 
-        let donation;
+        let transaction;
 
-        if (existingDonation && existingDonation.status === "completed") {
+        if (existingTransaction && existingTransaction.status === "completed") {
           // Already processed by webhook, return existing data
-          donation = await Donation.findOne({
+          transaction = await Transaction.findOne({
             paymentReference: reference,
           }).populate({
             path: "event",
             select: "chipInDetails title image slug host",
           });
 
-          if (!donation) return next(new AppError("Chip-in not found", 404));
+          if (!transaction) return next(new AppError("Chip-in not found", 404));
 
-          data = handleFormatData(donation);
+          data = handleFormatData(transaction);
           break;
         }
 
-        // Find and update donation
-        donation = await Donation.findOneAndUpdate(
+        // Find and update transaction
+        transaction = await Transaction.findOneAndUpdate(
           {
             paymentReference: reference,
           },
@@ -395,7 +444,6 @@ export const verifyPayment = catchAsync(async (req, res, next) => {
             status: "completed",
             metadata: {
               transactionId: reference?.toString(),
-              gateway: "paystack",
               gatewayResponse: paymentData.gateway_response,
             },
           },
@@ -404,11 +452,11 @@ export const verifyPayment = catchAsync(async (req, res, next) => {
           path: "event",
           select: "chipInDetails title image slug host",
         });
-        // Check if donation exists
-        if (!donation) return next(new AppError("Chip-in not found", 404));
+        // Check if transaction exists
+        if (!transaction) return next(new AppError("Chip-in not found", 404));
 
         // Prepare response data
-        data = handleFormatData(donation);
+        data = handleFormatData(transaction);
         break;
       case "ticket":
         break;
@@ -463,21 +511,20 @@ export const paystackWebhook = catchAsync(async (req, res, _next) => {
     switch (paymentType) {
       case "chipin":
         // Check if already processed (idempotency)
-        const existingDonation = await Donation.findOne({
+        const existingTransaction = await Transaction.findOne({
           paymentReference: reference,
         });
-        if (existingDonation && existingDonation.status === "completed") {
+        if (existingTransaction && existingTransaction.status === "completed") {
           return res.sendStatus(200); // Already processed
         }
 
-        // Update donation status
-        await Donation.findOneAndUpdate(
+        // Update transaction status
+        await Transaction.findOneAndUpdate(
           { paymentReference: reference },
           {
             status: "completed",
             metadata: {
               transactionId: reference?.toString(),
-              gateway: "paystack",
               gatewayResponse: verifiedData.gateway_response,
             },
           },

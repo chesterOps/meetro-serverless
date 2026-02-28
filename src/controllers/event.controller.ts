@@ -1,4 +1,4 @@
-import Donation from "../models/donation.model";
+import Transaction from "../models/transaction.model";
 import Event from "../models/event.model";
 import Response from "../models/response.model";
 import User from "../models/user.model";
@@ -76,19 +76,20 @@ export const deleteEvent = catchAsync(async (req, res, next) => {
       new AppError("You do not have permission to delete this event.", 403),
     );
   }
-  // Check for active donations
-  const donationCount = await Donation.getTotalDonations(event._id);
-  if (donationCount && donationCount.totalDonations > 0) {
+  // Check for active chip-ins
+  const chipInData = await Transaction.getTotalChipIns(event._id);
+  if (chipInData && chipInData.count > 0) {
     return next(
       new AppError(
-        "Cannot delete event with active donations. Please contact support.",
+        "Cannot delete event with active chip-ins. Please contact support.",
         403,
       ),
     );
   }
 
   // Check if event has balance
-  if (event.balance && event.balance > 0) {
+  const balance = await Transaction.getEventBalance(event._id);
+  if (balance > 0) {
     return next(
       new AppError(
         "Cannot delete event with available balance. Please contact support.",
@@ -230,11 +231,9 @@ export const getEvent = (isProtected = false) =>
     let event;
     // If slug, find by slug
     if (isSlug) {
-      event = await Event.findOne({ slug: eventId }).select(
-        "+updateCount +balance",
-      );
+      event = await Event.findOne({ slug: eventId }).select("+updateCount");
     } else {
-      event = await Event.findById(eventId).select("+updateCount +balance");
+      event = await Event.findById(eventId).select("+updateCount");
     }
     // If event not found, return error
     if (!event) return next(new AppError("Event not found", 404));
@@ -259,12 +258,16 @@ export const getEvent = (isProtected = false) =>
       skipBalance: !isHost,
     });
 
-    // If user is host, add total donations to response
+    // If user is host, add balance and total chip-ins to response
     if (isHost) {
-      const eventDonations = await Donation.getTotalDonations(event._id);
-      eventData.totalDonations = eventDonations
-        ? eventDonations.totalAmount
-        : 0;
+      const balance = await Transaction.getEventBalance(event._id);
+      eventData.balance = balance;
+    }
+
+    // Add chip data to response if event has chip-in details
+    if (event.chipInDetails) {
+      const chipInData = await Transaction.getTotalChipIns(event._id);
+      eventData.totalDonations = chipInData ? chipInData.totalAmount : 0;
     }
 
     // Add guest count to response

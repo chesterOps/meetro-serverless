@@ -65,7 +65,6 @@ export interface IEvent {
     type: string;
     details?: string;
   };
-  balance: number;
   updateCount: number;
   slug: string;
   socials?: {
@@ -248,12 +247,6 @@ const eventSchema = new mongoose.Schema<IEvent, EventModel>(
     updateCount: {
       type: Number,
       default: 0,
-    },
-    balance: {
-      type: Number,
-      default: 0,
-      select: false,
-      min: [0, "Balance cannot be negative"],
     },
     chipInDetails: {
       type: {
