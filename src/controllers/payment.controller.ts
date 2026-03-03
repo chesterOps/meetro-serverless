@@ -1,9 +1,11 @@
-import { paystack } from "../paystack/paystackSettlementPoller";
 import crypto from "crypto";
 import Transaction from "../models/transaction.model";
 import Event from "../models/event.model";
 import AppError from "../utils/appError";
 import catchAsync from "../utils/catchAsync";
+import { paystack } from "../paystack/paystackSettlementPoller";
+import { isValidObjectId } from "mongoose";
+import { calculateFee } from "../utils/helpers";
 
 function handleFormatData(donation: any) {
   const data = { ...donation.toObject() };
@@ -110,7 +112,6 @@ export const chipin = catchAsync(async (req, res, next) => {
       callback_url: `${process.env.FRONT_URL}/verify-payment`,
       metadata: {
         eventId: eventId,
-        transaction_fee: transaction.fee,
         originalAmount: Number(amount),
         type: "chipin",
       },
@@ -154,7 +155,7 @@ export const withdraw = catchAsync(async (req, res, next) => {
 
   if (!event) return next(new AppError("Event not found", 404));
 
-  if (event.host.toString() !== user._id.toString()) {
+  if (event.host._id.toString() !== user._id.toString()) {
     return next(
       new AppError(
         "You do not have permission to withdraw donations for this event.",
@@ -173,7 +174,6 @@ export const withdraw = catchAsync(async (req, res, next) => {
   }
 
   const requestedPayout = Number(amount);
-  const requestedPayoutKobo = Math.round(requestedPayout * 100);
 
   if (!Number.isFinite(requestedPayout) || requestedPayout <= 0) {
     return next(new AppError("Withdrawal amount must be positive", 400));
@@ -195,6 +195,22 @@ export const withdraw = catchAsync(async (req, res, next) => {
     );
   }
 
+  // Calculate withdrawal fee
+  const withdrawalFee = calculateFee(requestedPayout);
+  const netPayout = requestedPayout - withdrawalFee;
+
+  // Ensure net payout is positive after fee deduction
+  if (netPayout <= 0) {
+    return next(
+      new AppError(
+        `Withdrawal amount is too small. Minimum withdrawal after fees must be greater than ${withdrawalFee.toFixed(2)}`,
+        400,
+      ),
+    );
+  }
+
+  const netPayoutKobo = Math.round(netPayout * 100);
+
   const payoutReference = `PAYOUT_${Date.now()}_${crypto
     .randomBytes(8)
     .toString("hex")}`;
@@ -203,7 +219,7 @@ export const withdraw = catchAsync(async (req, res, next) => {
   try {
     transferResponse = await paystack.post("/transfer", {
       source: "balance",
-      amount: requestedPayoutKobo,
+      amount: netPayoutKobo,
       recipient: event.chipInDetails.bankDetails.recipientCode,
       reason: `Event payout for ${event.title}`,
       reference: payoutReference,
@@ -226,11 +242,12 @@ export const withdraw = catchAsync(async (req, res, next) => {
   const payoutStatus = transferStatus === "success" ? "completed" : "pending";
 
   // Create withdrawal transaction
-  await Transaction.create({
+  const transaction = await Transaction.create({
     event: event._id,
     userId: user._id,
     type: "withdrawal",
     amount: requestedPayout,
+    fee: withdrawalFee,
     currency: "NGN",
     status: payoutStatus,
     reference: payoutReference,
@@ -250,10 +267,8 @@ export const withdraw = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: "success",
     data: {
-      eventId: event._id,
-      payoutAmount: requestedPayout,
-      payoutReference: transferCode,
-      balance: newBalance,
+      transaction,
+      newBalance,
     },
     message: "Payout initiated successfully",
   });
@@ -261,17 +276,23 @@ export const withdraw = catchAsync(async (req, res, next) => {
 
 export const getTransactions = catchAsync(async (req, res, next) => {
   const user = res.locals.user;
-  const { eventId } = req.query;
+  const { eventId } = req.params;
 
   if (!eventId) {
-    return next(new AppError("Event ID is required", 400));
+    return next(new AppError("Event ID or slug is required", 400));
   }
 
-  const event = await Event.findById(eventId).select("host");
+  // Check if eventId is slug or ID
+  const isSlug = !isValidObjectId(eventId);
+
+  // Find event by ID or slug
+  const event = isSlug
+    ? await Event.findOne({ slug: eventId }).select("host")
+    : await Event.findById(eventId).select("host");
 
   if (!event) return next(new AppError("Event not found", 404));
 
-  if (event.host.toString() !== user._id.toString()) {
+  if (event.host._id.toString() !== user._id.toString()) {
     return next(
       new AppError(
         "You do not have permission to view transactions for this event.",
@@ -281,7 +302,7 @@ export const getTransactions = catchAsync(async (req, res, next) => {
   }
 
   const page = Math.max(parseInt(req.query.page as string) || 1, 1);
-  const limit = Math.min(parseInt(req.query.limit as string) || 20, 100);
+  const limit = Math.min(parseInt(req.query.limit as string) || 10, 100);
   const skip = (page - 1) * limit;
 
   // Get search and sort parameters
@@ -368,7 +389,6 @@ export const getTransactions = catchAsync(async (req, res, next) => {
     pagination: {
       total,
       page,
-      limit,
       totalPages: Math.ceil(total / limit),
     },
   });
@@ -542,4 +562,43 @@ export const paystackWebhook = catchAsync(async (req, res, _next) => {
   }
 
   res.sendStatus(200);
+});
+
+export const getEventBalance = catchAsync(async (req, res, next) => {
+  const user = res.locals.user;
+  const { eventId } = req.params;
+
+  if (!eventId) {
+    return next(new AppError("Event ID or slug is required", 400));
+  }
+
+  // Check if eventId is slug or ID
+  const isSlug = !isValidObjectId(eventId);
+  // Find event by ID or slug
+  const event = isSlug
+    ? await Event.findOne({ slug: eventId })
+    : await Event.findById(eventId);
+  if (!event) return next(new AppError("Event not found", 404));
+
+  if (event.host._id.toString() !== user._id.toString()) {
+    return next(
+      new AppError(
+        "You do not have permission to view the balance for this event.",
+        403,
+      ),
+    );
+  }
+
+  const balance = await Transaction.getEventBalance(event._id);
+
+  res.status(200).json({
+    status: "success",
+    data: {
+      eventId: event._id,
+      hostId: event.host._id,
+      bankDetails: event.chipInDetails?.bankDetails || null,
+      balance,
+    },
+    message: "Event balance retrieved successfully",
+  });
 });
