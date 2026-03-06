@@ -1,12 +1,15 @@
 import crypto from "crypto";
+import mongoose, { isValidObjectId } from "mongoose";
 import Transaction from "../models/transaction.model";
 import Event from "../models/event.model";
 import AppError from "../utils/appError";
 import catchAsync from "../utils/catchAsync";
 import { paystack } from "../paystack/paystackSettlementPoller";
-import { isValidObjectId } from "mongoose";
 import { calculateFee } from "../utils/helpers";
 
+// Withdrawal configuration constants
+const MIN_WITHDRAWAL_AMOUNT = 1000; // Minimum ₦1,000
+const WITHDRAWAL_RATE_LIMIT_HOURS = 1; // 1 hour between withdrawals
 function handleFormatData(donation: any) {
   const data = { ...donation.toObject() };
   data.event = {
@@ -149,6 +152,22 @@ export const withdraw = catchAsync(async (req, res, next) => {
     return next(new AppError("Withdrawal amount must be positive", 400));
   }
 
+  const requestedPayout = Number(amount);
+
+  if (!Number.isFinite(requestedPayout) || requestedPayout <= 0) {
+    return next(new AppError("Withdrawal amount must be positive", 400));
+  }
+
+  // Validate minimum withdrawal amount
+  if (requestedPayout < MIN_WITHDRAWAL_AMOUNT) {
+    return next(
+      new AppError(
+        `Minimum withdrawal amount is ₦${MIN_WITHDRAWAL_AMOUNT.toLocaleString()}`,
+        400,
+      ),
+    );
+  }
+
   const event = await Event.findById(eventId).select(
     "host chipInDetails title",
   );
@@ -173,24 +192,27 @@ export const withdraw = catchAsync(async (req, res, next) => {
     );
   }
 
-  const requestedPayout = Number(amount);
+  // Rate limiting: Check for recent withdrawals
+  const rateLimitTime = new Date(
+    Date.now() - WITHDRAWAL_RATE_LIMIT_HOURS * 60 * 60 * 1000,
+  );
+  const recentWithdrawal = await Transaction.findOne({
+    event: eventId,
+    type: "withdrawal",
+    createdAt: { $gte: rateLimitTime },
+  }).sort({ createdAt: -1 });
 
-  if (!Number.isFinite(requestedPayout) || requestedPayout <= 0) {
-    return next(new AppError("Withdrawal amount must be positive", 400));
-  }
-
-  // Calculate current balance from transactions
-  const currentBalance = await Transaction.getEventBalance(eventId);
-
-  if (!currentBalance || currentBalance <= 0) {
-    return next(new AppError("No available balance for withdrawal", 400));
-  }
-
-  if (requestedPayout > currentBalance) {
+  if (recentWithdrawal) {
+    const timeSinceLastWithdrawal =
+      Date.now() - recentWithdrawal.createdAt.getTime();
+    const minutesRemaining = Math.ceil(
+      (WITHDRAWAL_RATE_LIMIT_HOURS * 60 * 60 * 1000 - timeSinceLastWithdrawal) /
+        60000,
+    );
     return next(
       new AppError(
-        `Requested amount exceeds available balance. Available: ${currentBalance.toFixed(2)}`,
-        400,
+        `Please wait ${minutesRemaining} minutes before making another withdrawal`,
+        429,
       ),
     );
   }
@@ -203,18 +225,34 @@ export const withdraw = catchAsync(async (req, res, next) => {
   if (netPayout <= 0) {
     return next(
       new AppError(
-        `Withdrawal amount is too small. Minimum withdrawal after fees must be greater than ${withdrawalFee.toFixed(2)}`,
+        `Withdrawal amount is too low after fees. Minimum amount to cover fees is ₦${Math.ceil(withdrawalFee).toLocaleString()}`,
         400,
       ),
     );
   }
 
   const netPayoutKobo = Math.round(netPayout * 100);
-
   const payoutReference = `PAYOUT_${Date.now()}_${crypto
     .randomBytes(8)
     .toString("hex")}`;
 
+  // Check available balance before calling Paystack
+  const currentBalance = await Transaction.getEventBalance(eventId);
+
+  if (!currentBalance || currentBalance <= 0) {
+    return next(new AppError("No available balance for withdrawal", 400));
+  }
+
+  if (requestedPayout > currentBalance) {
+    return next(
+      new AppError(
+        `Requested amount exceeds available balance. Available: ₦${currentBalance.toFixed(2)}`,
+        400,
+      ),
+    );
+  }
+
+  // Call Paystack transfer first - no DB record until success
   let transferResponse;
   try {
     transferResponse = await paystack.post("/transfer", {
@@ -226,7 +264,12 @@ export const withdraw = catchAsync(async (req, res, next) => {
     });
   } catch (error: any) {
     return next(
-      new AppError(error.response?.data?.message || error.message, 500),
+      new AppError(
+        error.response?.data?.message ||
+          error.message ||
+          "Paystack transfer failed",
+        500,
+      ),
     );
   }
 
@@ -239,39 +282,93 @@ export const withdraw = catchAsync(async (req, res, next) => {
     transferResponse.data?.data?.reference ||
     payoutReference;
   const transferStatus = transferResponse.data?.data?.status;
-  const payoutStatus = transferStatus === "success" ? "completed" : "pending";
 
-  // Create withdrawal transaction
-  const transaction = await Transaction.create({
-    event: event._id,
-    userId: user._id,
-    type: "withdrawal",
-    amount: requestedPayout,
-    fee: withdrawalFee,
-    currency: "NGN",
-    status: payoutStatus,
-    reference: payoutReference,
-    transferCode,
-    gateway: "paystack",
-    bankDetails: {
-      accountName: event.chipInDetails.bankDetails.accountName,
-      accountNumber: event.chipInDetails.bankDetails.accountNumber,
-      bankName: event.chipInDetails.bankDetails.bankName,
-      bankCode: event.chipInDetails.bankDetails.bankCode,
-    },
-  });
+  // Only proceed if transfer was immediately successful
+  if (transferStatus !== "success" && transferStatus !== "completed") {
+    return next(
+      new AppError(
+        "Transfer is pending at payment gateway. Please try again later.",
+        400,
+      ),
+    );
+  }
 
-  // Calculate new balance
-  const newBalance = await Transaction.getEventBalance(eventId);
+  // Start database transaction to create the completed withdrawal
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-  res.status(200).json({
-    status: "success",
-    data: {
-      transaction,
-      newBalance,
-    },
-    message: "Payout initiated successfully",
-  });
+  try {
+    // Double-check balance hasn't changed (race condition protection)
+    const finalBalance = await Transaction.getEventBalance(eventId);
+
+    if (requestedPayout > finalBalance) {
+      throw new AppError(
+        "Balance changed during withdrawal. Please try again.",
+        409,
+      );
+    }
+
+    // Create completed withdrawal transaction
+    const [transaction] = await Transaction.create(
+      [
+        {
+          event: event._id,
+          userId: user._id,
+          type: "withdrawal",
+          amount: requestedPayout,
+          fee: withdrawalFee,
+          currency: "NGN",
+          status: "completed",
+          reference: payoutReference,
+          transferCode,
+          gateway: "paystack",
+          metadata: {
+            gatewayResponse: transferResponse.data?.data,
+          },
+          bankDetails: {
+            accountName: event.chipInDetails.bankDetails.accountName,
+            accountNumber: event.chipInDetails.bankDetails.accountNumber,
+            bankName: event.chipInDetails.bankDetails.bankName,
+            bankCode: event.chipInDetails.bankDetails.bankCode,
+          },
+        },
+      ],
+      { session },
+    );
+
+    // Commit the transaction
+    await session.commitTransaction();
+
+    // Calculate new balance after successful withdrawal
+    const newBalance = await Transaction.getEventBalance(eventId);
+
+    res.status(200).json({
+      status: "success",
+      data: {
+        transaction,
+        newBalance,
+      },
+      message: "Payout completed successfully",
+    });
+  } catch (error: any) {
+    // Rollback transaction on any error
+    await session.abortTransaction();
+
+    // If it's already an AppError, pass it through
+    if (error instanceof AppError) {
+      return next(error);
+    }
+
+    // Otherwise wrap it
+    return next(
+      new AppError(
+        error.message || "Withdrawal failed. Please try again.",
+        error.statusCode || 500,
+      ),
+    );
+  } finally {
+    session.endSession();
+  }
 });
 
 export const getTransactions = catchAsync(async (req, res, next) => {

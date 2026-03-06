@@ -185,14 +185,16 @@ const eventSchema = new mongoose.Schema<IEvent, EventModel>(
         public_id: String,
         url: String,
       },
-      default: {
-        url: `https://res.cloudinary.com/${
-          process.env.CLOUDINARY_CLOUD_NAME
-        }/image/upload/${
-          DEFAULT_EVENT_IMAGES[
-            Math.floor(Math.random() * DEFAULT_EVENT_IMAGES.length)
-          ]
-        }`,
+      default: function () {
+        return {
+          url: `https://res.cloudinary.com/${
+            process.env.CLOUDINARY_CLOUD_NAME
+          }/image/upload/${
+            DEFAULT_EVENT_IMAGES[
+              Math.floor(Math.random() * DEFAULT_EVENT_IMAGES.length)
+            ]
+          }`,
+        };
       },
     },
     category: {
