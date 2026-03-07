@@ -29,6 +29,7 @@ export interface IEvent {
       lat: number;
       lng: number;
     };
+    directions?: string;
   };
   chipInDetails?: {
     chipInType: "fixed" | "target" | "donation";
@@ -102,6 +103,7 @@ const eventSchema = new mongoose.Schema<IEvent, EventModel>(
     font: {
       type: String,
       trim: true,
+      default: "paytone",
       maxlength: [50, "Font cannot exceed 50 characters"],
     },
     startDate: {
@@ -171,6 +173,10 @@ const eventSchema = new mongoose.Schema<IEvent, EventModel>(
             lat: Number,
             lng: Number,
           },
+        },
+        directions: {
+          type: String,
+          trim: true,
         },
       },
       required: [
