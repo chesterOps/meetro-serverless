@@ -57,6 +57,29 @@ const formatEventData = (
       return user;
     });
   }
+  // Format cohosts
+  if (eventObj.cohosts && eventObj.cohosts.length > 0) {
+    eventObj.cohosts = eventObj.cohosts.map((cohost: any) => {
+      // If cohost.id is a populated user object
+      if (cohost.id && cohost.id._id) {
+        const formattedUser = formatGuestData(cohost.id);
+        return {
+          ...formattedUser,
+          id: cohost.id._id,
+          role: cohost.role,
+        };
+      }
+      // If not populated or just an email invite
+      return {
+        id: cohost.id,
+        name: cohost.name,
+        email: cohost.email,
+        photo: cohost.photo,
+        role: cohost.role,
+      };
+    });
+  }
+
   return eventObj;
 };
 
@@ -500,10 +523,38 @@ export const updateEvent = catchAsync(async (req, res, next) => {
     return next(
       new AppError(
         "You have reached the maximum number of updates for this event.",
-        403,
+        400,
       ),
     );
   }
+
+  // Parse fields
+  if (req.body.cohosts) req.body.cohosts = JSON.parse(req.body.cohosts);
+  if (req.body.category) req.body.category = JSON.parse(req.body.category);
+  if (req.body.dressCode) req.body.dressCode = JSON.parse(req.body.dressCode);
+  if (req.body.location) req.body.location = JSON.parse(req.body.location);
+  if (req.body.chipInDetails) req.body.chipInDetails = JSON.parse(req.body.chipInDetails);
+
+  // Process cohosts
+  if (req.body.cohosts && req.body.cohosts.length > 0) {
+    const cohostUsers = await User.find({
+      email: { $in: req.body.cohosts.map((cohost: any) => cohost.email) },
+    });
+    if (cohostUsers && cohostUsers.length > 0) {
+      req.body.cohosts = req.body.cohosts.map((cohost: any) => {
+        const matchedUser = cohostUsers.find(
+          (user) => user.email === cohost.email,
+        );
+        if (matchedUser) {
+          return { id: matchedUser._id, role: cohost.role };
+        }
+        return cohost;
+      });
+    }
+  }else{
+    req.body.cohosts = [];
+  }
+
 
   // Check for new image and delete old image if necessary
   if (req.body.image && event.image && event.image.public_id)
@@ -512,13 +563,14 @@ export const updateEvent = catchAsync(async (req, res, next) => {
   // Update event with new data
   Object.assign(event, req.body);
 
-  // Adjust event type based on location and meetingURL
-  if (req.body.meetingURL) {
-    event.eventType = "online";
-    event.location = undefined;
-  } else if (req.body.location) {
-    event.eventType = "offline";
-    event.meetingURL = undefined;
+  // Adjust event location and meetingURL based on eventType
+  switch (event.eventType) {
+    case "online":
+      event.location = undefined;
+      break;
+    case "offline":
+      event.meetingURL = undefined;
+      break;
   }
 
   // Increment updateCount if not admin

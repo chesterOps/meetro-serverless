@@ -24,6 +24,11 @@ const allowedFields = [
   "dressCode",
   "socials",
   "category",
+  "cohosts",
+  "chipInDetails",
+  "isPrivate",
+  "eventType",
+  "font"
 ];
 
 // Event router

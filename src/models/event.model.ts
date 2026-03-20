@@ -229,7 +229,10 @@ const eventSchema = new mongoose.Schema<IEvent, EventModel>(
           email: String,
           photo: String,
           role: String,
-          id: mongoose.Types.ObjectId,
+          id: {
+            type: mongoose.Types.ObjectId,
+            ref: "User",
+          },
         },
       ],
       default: [],

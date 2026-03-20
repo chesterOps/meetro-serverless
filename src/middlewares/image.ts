@@ -58,6 +58,12 @@ export const uploadImage =
           error.message,
         );
       }
+    } else {
+      if (req.body[field]) {
+        req.body[field] = {
+          url: req.body[field],
+        };
+      }
     }
 
     // Next middleware
