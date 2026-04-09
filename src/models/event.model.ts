@@ -33,9 +33,7 @@ export interface IEvent {
   };
   chipInDetails?: {
     chipInType: "fixed" | "target" | "donation";
-    fixedAmount?: number;
-    targetAmount?: number;
-    minAmount?: number;
+    amount: number;
     bankDetails: {
       accountName: string;
       accountNumber: string;
@@ -141,7 +139,7 @@ const eventSchema = new mongoose.Schema<IEvent, EventModel>(
     dressCode: {
       type: {
         type: String,
-        enum: ["corporate", "casual", "traditional", "custom"],
+        enum: ["Corporate", "Casual", "Traditional", "Custom"],
       },
       details: {
         type: String,
@@ -266,32 +264,9 @@ const eventSchema = new mongoose.Schema<IEvent, EventModel>(
           enum: ["fixed", "target", "donation"],
           required: [true, "Chip-in type is required"],
         },
-        fixedAmount: {
+        amount: {
           type: Number,
-          required: [
-            function (this: IEvent) {
-              return this.chipInDetails?.chipInType === "fixed";
-            },
-            "Fixed amount is required for fixed chip-in type",
-          ],
-        },
-        targetAmount: {
-          type: Number,
-          required: [
-            function (this: IEvent) {
-              return this.chipInDetails?.chipInType === "target";
-            },
-            "Target amount is required for target chip-in type",
-          ],
-        },
-        minAmount: {
-          type: Number,
-          required: [
-            function (this: IEvent) {
-              return this.chipInDetails?.chipInType === "donation";
-            },
-            "Minimum amount is required for donation chip-in type",
-          ],
+          required: [true, "Amount is required for chip-in"],
         },
         bankDetails: {
           type: {

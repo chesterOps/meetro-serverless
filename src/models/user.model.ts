@@ -10,14 +10,20 @@ export interface IUser extends mongoose.Document {
     public_id?: string;
     url: string;
   };
-  phone?: string;
   role: "user" | "admin";
   password: string;
-  interests: string[];
-  bio?: string;
   active: boolean;
   passwordChangedAt?: Date;
   googleId?: string;
+  preferences: {
+    profileVisibility: boolean;
+    socialMediaVisibility: boolean;
+    notificationMode: "Email" | "Phone";
+    eventReminders: boolean;
+    eventUpdates: boolean;
+    guestRegistrations: boolean;
+    productUpdates: boolean;
+  };
   socials?: {
     facebook?: string;
     twitter?: string;
@@ -66,11 +72,6 @@ const userSchema = new mongoose.Schema<IUser, UserModel, IUserMethods>(
         url: String,
       },
     },
-    phone: {
-      type: String,
-      unique: true,
-      sparse: true,
-    },
     role: {
       type: String,
       enum: ["user", "admin"],
@@ -80,21 +81,6 @@ const userSchema = new mongoose.Schema<IUser, UserModel, IUserMethods>(
       type: String,
       select: false,
       default: undefined,
-    },
-    interests: {
-      type: [String],
-      validate: {
-        validator: function (arr: string[]) {
-          return arr.length <= 6;
-        },
-        message: "Interests cannot exceed 6 items",
-      },
-    },
-
-    bio: {
-      type: String,
-      maxlength: [500, "Bio must be at most 500 characters"],
-      trim: true,
     },
     active: {
       type: Boolean,
@@ -108,6 +94,40 @@ const userSchema = new mongoose.Schema<IUser, UserModel, IUserMethods>(
     passwordChangedAt: {
       type: Date,
       select: false,
+    },
+    preferences: {
+      type: {
+        profileVisibility: {
+          type: Boolean,
+          default: true,
+        },
+
+        socialMediaVisibility: {
+          type: Boolean,
+          default: true,
+        },
+        notificationMode: {
+          type: String,
+          enum: ["Email", "Phone"],
+          default: "Email",
+        },
+        eventReminders: {
+          type: Boolean,
+          default: false,
+        },
+        eventUpdates: {
+          type: Boolean,
+          default: false,
+        },
+        guestRegistrations: {
+          type: Boolean,
+          default: false,
+        },
+        productUpdates: {
+          type: Boolean,
+          default: false,
+        },
+      },
     },
     googleId: {
       type: String,

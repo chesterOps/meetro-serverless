@@ -1,4 +1,6 @@
 import express from "express";
+import upload from "../middlewares/multer";
+import filter from "../middlewares/filter";
 import {
   confirmAttendance,
   createEvent,
@@ -10,8 +12,7 @@ import {
 } from "../controllers/event.controller";
 import { isLoggedIn, protect } from "../middlewares/auth.middleware";
 import { uploadImage } from "../middlewares/image";
-import upload from "../middlewares/multer";
-import filter from "../middlewares/filter";
+
 
 const allowedFields = [
   "title",

@@ -142,6 +142,13 @@ export const deleteEvent = catchAsync(async (req, res, next) => {
 });
 
 export const createEvent = catchAsync(async (req, res, next) => {
+  // Parse fields
+  if (req.body.cohosts) req.body.cohosts = JSON.parse(req.body.cohosts);
+  if (req.body.category) req.body.category = JSON.parse(req.body.category);
+  if (req.body.dressCode) req.body.dressCode = JSON.parse(req.body.dressCode);
+  if (req.body.location) req.body.location = JSON.parse(req.body.location);
+  if (req.body.chipInDetails)
+    req.body.chipInDetails = JSON.parse(req.body.chipInDetails);
   // If meetingURL is provided, set eventType to "online"
   if (req.body.meetingURL) req.body.eventType = "online";
   else req.body.eventType = "offline";
@@ -180,24 +187,24 @@ export const createEvent = catchAsync(async (req, res, next) => {
   }
 
   // Process cohosts
-  if (!req.body.cohosts) req.body.cohosts = [];
-
-  // Check if cohosts are on the platform
-  const cohostUsers = await User.find({
-    email: { $in: req.body.cohosts.map((cohost: any) => cohost.email) },
-  });
-
-  // Replace cohost entries with user details if they exist on the platform
-  if (cohostUsers && cohostUsers.length > 0) {
-    req.body.cohosts = req.body.cohosts.map((cohost: any) => {
-      const matchedUser = cohostUsers.find(
-        (user) => user.email === cohost.email,
-      );
-      if (matchedUser) {
-        return { id: matchedUser._id, role: cohost.role };
-      }
-      return cohost;
+  if (req.body.cohosts && req.body.cohosts.length > 0) {
+    // Check if cohosts are on platform
+    const cohostUsers = await User.find({
+      email: { $in: req.body.cohosts.map((cohost: any) => cohost.email) },
     });
+    if (cohostUsers && cohostUsers.length > 0) {
+      req.body.cohosts = req.body.cohosts.map((cohost: any) => {
+        const matchedUser = cohostUsers.find(
+          (user) => user.email === cohost.email,
+        );
+        if (matchedUser) {
+          return { id: matchedUser._id, role: cohost.role };
+        }
+        return cohost;
+      });
+    }
+  } else {
+    req.body.cohosts = [];
   }
 
   // Create event
@@ -206,10 +213,10 @@ export const createEvent = catchAsync(async (req, res, next) => {
   // Collect all users who should be marked as "going"
   const usersToMarkGoing = new Set<string>();
   if (event.host) usersToMarkGoing.add(event.host._id.toString()); // Host
-  if (cohostUsers && cohostUsers.length > 0) {
-    cohostUsers.forEach((cohost) =>
-      usersToMarkGoing.add(cohost._id.toString()),
-    );
+  if (event.cohosts && event.cohosts.length > 0) {
+    event.cohosts.forEach((cohost) => {
+      if (cohost.id) usersToMarkGoing.add(cohost.id.toString());
+    });
   }
 
   // Create "going" responses for all organizers
@@ -533,7 +540,8 @@ export const updateEvent = catchAsync(async (req, res, next) => {
   if (req.body.category) req.body.category = JSON.parse(req.body.category);
   if (req.body.dressCode) req.body.dressCode = JSON.parse(req.body.dressCode);
   if (req.body.location) req.body.location = JSON.parse(req.body.location);
-  if (req.body.chipInDetails) req.body.chipInDetails = JSON.parse(req.body.chipInDetails);
+  if (req.body.chipInDetails)
+    req.body.chipInDetails = JSON.parse(req.body.chipInDetails);
 
   // Process cohosts
   if (req.body.cohosts && req.body.cohosts.length > 0) {
@@ -551,10 +559,9 @@ export const updateEvent = catchAsync(async (req, res, next) => {
         return cohost;
       });
     }
-  }else{
+  } else {
     req.body.cohosts = [];
   }
-
 
   // Check for new image and delete old image if necessary
   if (req.body.image && event.image && event.image.public_id)
