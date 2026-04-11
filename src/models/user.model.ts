@@ -29,9 +29,6 @@ export interface IUser extends mongoose.Document {
     twitter?: string;
     instagram?: string;
     linkedin?: string;
-    youtube?: string;
-    tiktok?: string;
-    gmail?: string;
   };
   address?: string;
   verified: boolean;
@@ -134,14 +131,17 @@ const userSchema = new mongoose.Schema<IUser, UserModel, IUserMethods>(
       select: false,
     },
     socials: {
-      type: {
-        facebook: String,
-        twitter: String,
-        instagram: String,
-        linkedin: String,
-        youtube: String,
-        tiktok: String,
-        gmail: String,
+      facebook: {
+        type: String,
+      },
+      twitter: {
+        type: String,
+      },
+      instagram: {
+        type: String,
+      },
+      linkedin: {
+        type: String,
       },
     },
     address: {

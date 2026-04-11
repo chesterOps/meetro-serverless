@@ -363,6 +363,16 @@ export const updateProfile = catchAsync(async (req, res, next) => {
   // Get user ID from request
   const userID = res.locals.user.id;
 
+  // Parse socials field if it's a string (in case it was sent as form-data)
+  if (req.body.socials) {
+    req.body.socials = JSON.parse(req.body.socials);
+  }
+
+  const [firstName, lastName] = req.body.name.split(" ") || [];
+
+  if (firstName) req.body.firstName = firstName;
+  if (lastName) req.body.lastName = lastName;
+
   // Update user
   const updatedUser = await User.findByIdAndUpdate(userID, req.body, {
     new: true,

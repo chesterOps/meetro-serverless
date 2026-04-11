@@ -19,7 +19,7 @@ import {
 import { protect } from "../middlewares/auth.middleware";
 import { uploadImage } from "../middlewares/image";
 
-const allowedFields = ["firstName", "lastName", "address", "photo", "socials"];
+const allowedFields = ["name", "address", "photo", "socials"];
 
 // Auth router
 const authRouter = express.Router();

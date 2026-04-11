@@ -71,9 +71,6 @@ export interface IEvent {
     twitter?: string;
     instagram?: string;
     linkedin?: string;
-    youtube?: string;
-    tiktok?: string;
-    gmail?: string;
   };
 }
 
@@ -282,14 +279,20 @@ const eventSchema = new mongoose.Schema<IEvent, EventModel>(
     },
     socials: {
       type: {
-        facebook: String,
-        twitter: String,
-        instagram: String,
-        linkedin: String,
-        youtube: String,
-        tiktok: String,
-        gmail: String,
+        facebook: {
+          type: String,
+        },
+        twitter: {
+          type: String,
+        },
+        instagram: {
+          type: String,
+        },
+        linkedin: {
+          type: String,
+        },
       },
+      default: {},
     },
     isFeatured: {
       type: Boolean,

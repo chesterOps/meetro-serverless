@@ -143,11 +143,15 @@ export const deleteEvent = catchAsync(async (req, res, next) => {
 
 export const createEvent = catchAsync(async (req, res, next) => {
   // Parse fields
-  if (req.body.cohosts) req.body.cohosts = JSON.parse(req.body.cohosts);
-  if (req.body.category) req.body.category = JSON.parse(req.body.category);
-  if (req.body.dressCode) req.body.dressCode = JSON.parse(req.body.dressCode);
-  if (req.body.location) req.body.location = JSON.parse(req.body.location);
-  if (req.body.chipInDetails)
+  if (typeof req.body.cohosts === "string")
+    req.body.cohosts = JSON.parse(req.body.cohosts);
+  if (typeof req.body.category === "string")
+    req.body.category = JSON.parse(req.body.category);
+  if (typeof req.body.dressCode === "string")
+    req.body.dressCode = JSON.parse(req.body.dressCode);
+  if (typeof req.body.location === "string")
+    req.body.location = JSON.parse(req.body.location);
+  if (typeof req.body.chipInDetails === "string")
     req.body.chipInDetails = JSON.parse(req.body.chipInDetails);
   // If meetingURL is provided, set eventType to "online"
   if (req.body.meetingURL) req.body.eventType = "online";
