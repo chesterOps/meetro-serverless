@@ -16,9 +16,9 @@ export interface IUser extends mongoose.Document {
   passwordChangedAt?: Date;
   googleId?: string;
   preferences: {
-    profileVisibility: boolean;
-    socialMediaVisibility: boolean;
-    notificationMode: "Email" | "Phone";
+    profileVisibility: "public" | "private";
+    socialMediaVisibility: "public" | "private";
+    notificationMode: "email" | "phone";
     eventReminders: boolean;
     eventUpdates: boolean;
     guestRegistrations: boolean;
@@ -95,18 +95,20 @@ const userSchema = new mongoose.Schema<IUser, UserModel, IUserMethods>(
     preferences: {
       type: {
         profileVisibility: {
-          type: Boolean,
-          default: true,
+          type: String,
+          enum: ["public", "private"],
+          default: "public",
         },
 
         socialMediaVisibility: {
-          type: Boolean,
-          default: true,
+          type: String,
+          enum: ["public", "private"],
+          default: "public",
         },
         notificationMode: {
           type: String,
-          enum: ["Email", "Phone"],
-          default: "Email",
+          enum: ["email", "phone"],
+          default: "email",
         },
         eventReminders: {
           type: Boolean,
