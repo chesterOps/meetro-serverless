@@ -182,6 +182,7 @@ const userSchema = new mongoose.Schema<IUser, UserModel, IUserMethods>(
       },
       recipientCode: {
         type: String,
+        select: false,
       },
       accountName: {
         type: String,

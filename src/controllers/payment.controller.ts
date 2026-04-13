@@ -73,33 +73,28 @@ export const updateBankDetails = catchAsync(async (req, res, next) => {
   }
   const { accountNumber, bankName, accountName, bankCode, eventFeesPaidBy } =
     req.body;
-  if (!accountNumber || !bankName || !accountName || !bankCode) {
-    return next(
-      new AppError(
-        "Account number, bank name, account name, and bank code are required",
-        400,
-      ),
-    );
-  }
-  try {
-    const response = await paystack.post("/transferrecipient", {
-      type: "nuban",
-      name: accountName,
-      account_number: accountNumber,
-      bank_code: bankCode,
-      currency: "NGN",
-    });
-    if (!response.data.status) {
-      return next(new AppError("Failed to create transfer recipient", 500));
-    }
 
-    user.bankDetails = {
-      accountNumber,
-      bankName,
-      bankCode,
-      accountName,
-      recipientCode: response.data.data.recipient_code,
-    };
+  try {
+    if (accountName && bankCode && accountNumber) {
+      const response = await paystack.post("/transferrecipient", {
+        type: "nuban",
+        name: accountName,
+        account_number: accountNumber,
+        bank_code: bankCode,
+        currency: "NGN",
+      });
+      if (!response.data.status) {
+        return next(new AppError("Failed to create transfer recipient", 500));
+      }
+
+      user.bankDetails = {
+        accountNumber,
+        bankName,
+        bankCode,
+        accountName,
+        recipientCode: response.data.data.recipient_code,
+      };
+    }
 
     if (eventFeesPaidBy) {
       user.preferences = {
@@ -109,10 +104,16 @@ export const updateBankDetails = catchAsync(async (req, res, next) => {
     }
 
     await user.save();
+
     res.status(200).json({
       status: "success",
       data: {
-        bankDetails: user.bankDetails,
+        bankDetails: {
+          accountNumber: user.bankDetails?.accountNumber || "",
+          bankName: user.bankDetails?.bankName || "",
+          bankCode: user.bankDetails?.bankCode || "",
+          accountName: user.bankDetails?.accountName || "",
+        },
         preferences: user.preferences,
       },
       message: "Bank details updated successfully",
