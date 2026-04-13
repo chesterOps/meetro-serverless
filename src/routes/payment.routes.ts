@@ -4,6 +4,7 @@ import {
   getEventBalance,
   getTransactions,
   paystackWebhook,
+  updateBankDetails,
   verifyBankAccount,
   verifyPayment,
   withdraw,
@@ -23,6 +24,8 @@ paymentRouter.get("/balance/:eventId", protect, getEventBalance);
 paymentRouter.get("/transactions/:eventId", protect, getTransactions);
 
 paymentRouter.get("/verify-payment", verifyPayment);
+
+paymentRouter.patch("/update-bank", protect, updateBankDetails);
 
 paymentRouter.post("/webhook/paystack", paystackWebhook);
 

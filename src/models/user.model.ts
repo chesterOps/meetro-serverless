@@ -23,6 +23,14 @@ export interface IUser extends mongoose.Document {
     eventUpdates: boolean;
     guestRegistrations: boolean;
     productUpdates: boolean;
+    eventFeesPaidBy: "user" | "organizer";
+  };
+  bankDetails?: {
+    accountNumber: string;
+    bankName: string;
+    bankCode: string;
+    accountName: string;
+    recipientCode: string;
   };
   socials?: {
     facebook?: string;
@@ -99,7 +107,6 @@ const userSchema = new mongoose.Schema<IUser, UserModel, IUserMethods>(
           enum: ["public", "private"],
           default: "public",
         },
-
         socialMediaVisibility: {
           type: String,
           enum: ["public", "private"],
@@ -125,6 +132,11 @@ const userSchema = new mongoose.Schema<IUser, UserModel, IUserMethods>(
         productUpdates: {
           type: Boolean,
           default: false,
+        },
+        eventFeesPaidBy: {
+          type: String,
+          enum: ["user", "organizer"],
+          default: "organizer",
         },
       },
     },
@@ -157,6 +169,23 @@ const userSchema = new mongoose.Schema<IUser, UserModel, IUserMethods>(
       type: Number,
       default: 0,
       select: false,
+    },
+    bankDetails: {
+      accountNumber: {
+        type: String,
+      },
+      bankName: {
+        type: String,
+      },
+      bankCode: {
+        type: String,
+      },
+      recipientCode: {
+        type: String,
+      },
+      accountName: {
+        type: String,
+      },
     },
   },
   {

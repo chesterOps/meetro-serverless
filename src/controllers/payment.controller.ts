@@ -1,9 +1,10 @@
 import crypto from "crypto";
-import mongoose, { isValidObjectId } from "mongoose";
+import User from "../models/user.model";
 import Transaction from "../models/transaction.model";
 import Event from "../models/event.model";
 import AppError from "../utils/appError";
 import catchAsync from "../utils/catchAsync";
+import mongoose, { isValidObjectId } from "mongoose";
 import { paystack } from "../paystack/paystackSettlementPoller";
 import { calculateFee } from "../utils/helpers";
 
@@ -56,6 +57,65 @@ export const verifyBankAccount = catchAsync(async (req, res, next) => {
         accountNumber: response.data.data.account_number,
       },
       message: "Bank account verified successfully",
+    });
+  } catch (error: any) {
+    return next(
+      new AppError(error.response?.data?.message || error.message, 500),
+    );
+  }
+});
+
+export const updateBankDetails = catchAsync(async (req, res, next) => {
+  const userID = res.locals.user._id;
+  const user = await User.findById(userID);
+  if (!user) {
+    return next(new AppError("User not found", 404));
+  }
+  const { accountNumber, bankName, accountName, bankCode, eventFeesPaidBy } =
+    req.body;
+  if (!accountNumber || !bankName || !accountName || !bankCode) {
+    return next(
+      new AppError(
+        "Account number, bank name, account name, and bank code are required",
+        400,
+      ),
+    );
+  }
+  try {
+    const response = await paystack.post("/transferrecipient", {
+      type: "nuban",
+      name: accountName,
+      account_number: accountNumber,
+      bank_code: bankCode,
+      currency: "NGN",
+    });
+    if (!response.data.status) {
+      return next(new AppError("Failed to create transfer recipient", 500));
+    }
+
+    user.bankDetails = {
+      accountNumber,
+      bankName,
+      bankCode,
+      accountName,
+      recipientCode: response.data.data.recipient_code,
+    };
+
+    if (eventFeesPaidBy) {
+      user.preferences = {
+        ...user.preferences,
+        eventFeesPaidBy,
+      };
+    }
+
+    await user.save();
+    res.status(200).json({
+      status: "success",
+      data: {
+        bankDetails: user.bankDetails,
+        preferences: user.preferences,
+      },
+      message: "Bank details updated successfully",
     });
   } catch (error: any) {
     return next(
