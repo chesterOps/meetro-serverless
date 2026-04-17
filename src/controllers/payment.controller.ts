@@ -74,55 +74,37 @@ export const updateBankDetails = catchAsync(async (req, res, next) => {
   const { accountNumber, bankName, accountName, bankCode, eventFeesPaidBy } =
     req.body;
 
-  try {
-    if (accountName && bankCode && accountNumber) {
-      const response = await paystack.post("/transferrecipient", {
-        type: "nuban",
-        name: accountName,
-        account_number: accountNumber,
-        bank_code: bankCode,
-        currency: "NGN",
-      });
-      if (!response.data.status) {
-        return next(new AppError("Failed to create transfer recipient", 500));
-      }
-
-      user.bankDetails = {
-        accountNumber,
-        bankName,
-        bankCode,
-        accountName,
-        recipientCode: response.data.data.recipient_code,
-      };
-    }
-
-    if (eventFeesPaidBy) {
-      user.preferences = {
-        ...user.preferences,
-        eventFeesPaidBy,
-      };
-    }
-
-    await user.save();
-
-    res.status(200).json({
-      status: "success",
-      data: {
-        bankDetails: {
-          accountNumber: user.bankDetails?.accountNumber || "",
-          bankName: user.bankDetails?.bankName || "",
-          bankCode: user.bankDetails?.bankCode || "",
-          accountName: user.bankDetails?.accountName || "",
-        },
-        preferences: user.preferences,
-      },
-      message: "Bank details updated successfully",
-    });
-  } catch (error: any) {
-    return next(
-      new AppError(error.response?.data?.message || error.message, 500),
-    );
+  if (accountName && bankCode && accountNumber && bankName) {
+    user.bankDetails = {
+      accountNumber,
+      bankName,
+      bankCode,
+      accountName,
+    };
   }
+
+  if (eventFeesPaidBy) {
+    user.preferences = {
+      ...user.preferences,
+      eventFeesPaidBy,
+    };
+  }
+
+  await user.save();
+
+  res.status(200).json({
+    status: "success",
+    data: {
+      bankDetails: {
+        accountNumber: user.bankDetails?.accountNumber || "",
+        bankName: user.bankDetails?.bankName || "",
+        bankCode: user.bankDetails?.bankCode || "",
+        accountName: user.bankDetails?.accountName || "",
+      },
+      preferences: user.preferences,
+    },
+    message: "Bank details updated successfully",
+  });
 });
 
 export const chipin = catchAsync(async (req, res, next) => {

@@ -30,7 +30,6 @@ export interface IUser extends mongoose.Document {
     bankName: string;
     bankCode: string;
     accountName: string;
-    recipientCode: string;
   };
   socials?: {
     facebook?: string;
@@ -179,10 +178,6 @@ const userSchema = new mongoose.Schema<IUser, UserModel, IUserMethods>(
       },
       bankCode: {
         type: String,
-      },
-      recipientCode: {
-        type: String,
-        select: false,
       },
       accountName: {
         type: String,
