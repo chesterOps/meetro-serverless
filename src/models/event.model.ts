@@ -125,7 +125,6 @@ const eventSchema = new mongoose.Schema<IEvent, EventModel>(
     },
     endDate: {
       type: Date,
-      required: [true, "End date is required"],
       validate: {
         validator: function (this: any, value: Date) {
           return value > this.startDate;
@@ -147,7 +146,6 @@ const eventSchema = new mongoose.Schema<IEvent, EventModel>(
       type: {
         venue: {
           type: String,
-          required: [true, "Location venue is required"],
           trim: true,
         },
         state: {

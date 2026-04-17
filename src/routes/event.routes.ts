@@ -9,10 +9,10 @@ import {
   getAllGuests,
   getMyEvents,
   updateEvent,
+  getUserEventCounts,
 } from "../controllers/event.controller";
 import { isLoggedIn, protect } from "../middlewares/auth.middleware";
 import { uploadImage } from "../middlewares/image";
-
 
 const allowedFields = [
   "title",
@@ -29,7 +29,7 @@ const allowedFields = [
   "chipInDetails",
   "isPrivate",
   "eventType",
-  "font"
+  "font",
 ];
 
 // Event router
@@ -40,6 +40,8 @@ eventRouter
   .post(protect, upload.single("image"), uploadImage("image"), createEvent);
 
 eventRouter.get("/my-events", protect, getMyEvents);
+
+eventRouter.get("/event-counts", protect, getUserEventCounts);
 
 eventRouter.post("/confirm-attendance", protect, confirmAttendance);
 

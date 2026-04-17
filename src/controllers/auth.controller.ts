@@ -429,26 +429,11 @@ export const getProfile = catchAsync(async (_req, res, next) => {
 
   if (photo) userProfile.photo = photo.url;
 
-  // Get user events count
-  const createdEventsCount = await Event.countDocuments({
-    "host.email": user.email,
-  });
-
-  // Get user attended events count
-  const attendedEventsCount = await Response.countDocuments({
-    user: user._id,
-    status: "going",
-  });
-
   // Send response
   res.status(200).json({
     status: "success",
     data: {
       user: userProfile,
-      userEventsCount: {
-        hosted: createdEventsCount,
-        attended: attendedEventsCount,
-      },
     },
   });
 });

@@ -602,6 +602,28 @@ export const updateEvent = catchAsync(async (req, res, next) => {
   });
 });
 
+export const getUserEventCounts = catchAsync(async (_req, res, _next) => {
+  const user = res.locals.user;
+  // Get user events count
+  const createdEventsCount = await Event.countDocuments({
+    "host.email": user.email,
+  });
+
+  // Get user attended events count
+  const attendedEventsCount = await Response.countDocuments({
+    user: user._id,
+    status: "going",
+  });
+  // Send response
+  res.status(200).json({
+    status: "success",
+    data: {
+      created: createdEventsCount,
+      attended: attendedEventsCount,
+    },
+  });
+});
+
 export const confirmAttendance = catchAsync(async (req, res, next) => {
   // Get response status from body
   const { responseStatus, eventId } = req.body;
