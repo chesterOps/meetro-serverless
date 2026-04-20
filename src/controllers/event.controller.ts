@@ -605,15 +605,21 @@ export const updateEvent = catchAsync(async (req, res, next) => {
 export const getUserEventCounts = catchAsync(async (_req, res, _next) => {
   const user = res.locals.user;
   // Get user events count
-  const createdEventsCount = await Event.countDocuments({
-    "host.email": user.email,
-  });
+  const createdEventsCount = await Event.find({
+    host: user._id.toString(),
+  }).countDocuments();
 
-  // Get user attended events count
-  const attendedEventsCount = await Response.countDocuments({
-    user: user._id,
+  const userResponses = await Response.find({
+    user: user._id.toString(),
     status: "going",
   });
+
+  const attendedEventsCount = await Event.find({
+    _id: { $in: userResponses.map((response) => response.event) },
+    host: { $ne: user._id.toString() },
+    endDate: { $lt: new Date() },
+  }).countDocuments();
+
   // Send response
   res.status(200).json({
     status: "success",
