@@ -330,7 +330,9 @@ eventSchema.methods.getGuestCount = async function () {
 eventSchema.virtual("status").get(function (this: IEvent) {
   const now = new Date();
   if (now < this.startDate) return "upcoming";
-  if (now >= this.startDate && now <= this.endDate) return "ongoing";
+  if (now >= this.startDate) {
+    if (!this.endDate || now <= this.endDate) return "ongoing";
+  }
   return "completed";
 });
 

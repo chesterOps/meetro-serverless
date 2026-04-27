@@ -474,7 +474,6 @@ export const getMyEvents = catchAsync(async (req, res, _next) => {
   const events = results[0]?.data || [];
 
   // Format events using helper and add status
-  // const now = new Date(); // Removed duplicate declaration
   const formattedEvents = events.map((event: any) => {
     const eventData = formatEventData(event, {
       skipGuests: true,
@@ -482,15 +481,20 @@ export const getMyEvents = catchAsync(async (req, res, _next) => {
       skipUpdateCount: user.id !== event.host.id,
     });
     let status = "upcoming";
-    if (event.startDate && event.endDate) {
+    if (event.startDate) {
       const start = new Date(event.startDate);
-      const end = new Date(event.endDate);
       if (now < start) {
         status = "upcoming";
-      } else if (now >= start && now <= end) {
+      } else if (event.endDate) {
+        const end = new Date(event.endDate);
+        if (now >= start && now <= end) {
+          status = "ongoing";
+        } else if (now > end) {
+          status = "past";
+        }
+      } else {
+        // If no endDate, event is ongoing once startDate has passed
         status = "ongoing";
-      } else if (now > end) {
-        status = "past";
       }
     }
     return { ...eventData, status };
