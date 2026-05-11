@@ -348,7 +348,16 @@ export const getMyEvents = catchAsync(async (req, res, _next) => {
   if (filter === "upcoming") {
     dateFilter = { startDate: { $gte: now } };
   } else if (filter === "past") {
-    dateFilter = { endDate: { $lt: now } };
+    // For past events, we check if endDate is in the past. If no endDate, we check if startDate is in the past
+
+    dateFilter = {
+      $or: [
+        { endDate: { $lt: now } },
+        {
+          $and: [{ endDate: { $exists: false } }, { startDate: { $lt: now } }],
+        },
+      ],
+    };
   }
 
   // Use aggregation for efficient pagination
@@ -357,7 +366,7 @@ export const getMyEvents = catchAsync(async (req, res, _next) => {
     {
       $match: {
         $or: [{ host: user._id }, { "cohosts.id": user._id }],
-        ...dateFilter,
+        $and: [dateFilter],
       },
     },
     // 2. Lookup for CURRENT USER'S response (to set userResponse)
@@ -430,10 +439,7 @@ export const getMyEvents = catchAsync(async (req, res, _next) => {
     {
       $addFields: {
         userResponse: {
-          $ifNull: [
-            { $arrayElemAt: ["$currentUserResponse.status", 0] },
-            "none",
-          ],
+          $ifNull: [{ $arrayElemAt: ["$currentUserResponse.status", 0] }, ""],
         },
         userRole: {
           $cond: [
@@ -488,13 +494,13 @@ export const getMyEvents = catchAsync(async (req, res, _next) => {
       } else if (event.endDate) {
         const end = new Date(event.endDate);
         if (now >= start && now <= end) {
-          status = "ongoing";
+          status = "live now";
         } else if (now > end) {
-          status = "past";
+          status = "completed";
         }
       } else {
-        // If no endDate, event is ongoing once startDate has passed
-        status = "ongoing";
+        // If no endDate, event has past if current date is after startDate
+        status = "completed";
       }
     }
     return { ...eventData, status };

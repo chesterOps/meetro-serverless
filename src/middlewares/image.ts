@@ -23,11 +23,17 @@ const uploadToCloudinary = (
 export const uploadImage =
   (field: string) =>
   async (req: Request, _res: Response, next: NextFunction) => {
+    const file =
+      req.file ||
+      (req.files && Array.isArray((req.files as any)[field])
+        ? (req.files as any)[field][0]
+        : undefined);
+
     // Check for single image file
-    if (req.file) {
+    if (file) {
       try {
         // Split file name by "." to remove extension
-        const fileName = req.file.originalname.split(".");
+        const fileName = file.originalname.split(".");
         // Remove the last part (extension)
         fileName.pop();
         // Sanitize filename - remove special characters
@@ -39,7 +45,7 @@ export const uploadImage =
 
         // Upload to Cloudinary
         const result = (await uploadToCloudinary(
-          req.file.buffer,
+          file.buffer,
           "meetro",
           public_id,
         )) as CloudinaryUploadResult;
@@ -69,6 +75,56 @@ export const uploadImage =
     // Next middleware
     next();
   };
+
+export const uploadCohostImages = async (
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+) => {
+  try {
+    if (typeof req.body.cohosts === "string") {
+      req.body.cohosts = JSON.parse(req.body.cohosts);
+    }
+
+    const cohostFiles = (req.files as any)?.cohostImages;
+    if (!Array.isArray(cohostFiles) || cohostFiles.length === 0) {
+      return next();
+    }
+
+    if (!Array.isArray(req.body.cohosts)) {
+      return next();
+    }
+
+    const uploadedPhotos: string[] = [];
+    for (const file of cohostFiles) {
+      try {
+        const fileName = file.originalname.split(".");
+        fileName.pop();
+        const sanitizedName = fileName.join("").replace(/[^a-zA-Z0-9]/g, "_");
+        const timestamp = Date.now();
+        const public_id = `${timestamp}-${sanitizedName}`;
+        const result = (await uploadToCloudinary(
+          file.buffer,
+          "meetro",
+          public_id,
+        )) as CloudinaryUploadResult;
+        uploadedPhotos.push(result.secure_url);
+      } catch (error: any) {
+        console.error("Cohost image upload failed:", error.message);
+        uploadedPhotos.push("");
+      }
+    }
+
+    req.body.cohosts = req.body.cohosts.map((cohost: any, idx: number) => ({
+      ...cohost,
+      photo: cohost.photo ?? uploadedPhotos[idx] ?? cohost.photo,
+    }));
+  } catch (error: any) {
+    console.error("Failed to process cohost images:", error.message);
+  }
+
+  next();
+};
 
 export const deleteImage = async (image: string) => {
   try {

@@ -329,11 +329,24 @@ eventSchema.methods.getGuestCount = async function () {
 // Virtual event status
 eventSchema.virtual("status").get(function (this: IEvent) {
   const now = new Date();
-  if (now < this.startDate) return "upcoming";
-  if (now >= this.startDate) {
-    if (!this.endDate || now <= this.endDate) return "ongoing";
+  let status = "upcoming";
+  if (this.startDate) {
+    const start = new Date(this.startDate);
+    if (now < start) {
+      status = "upcoming";
+    } else if (this.endDate) {
+      const end = new Date(this.endDate);
+      if (now >= start && now <= end) {
+        status = "live now";
+      } else if (now > end) {
+        status = "completed";
+      }
+    } else {
+      // If no endDate, event has past if current date is after startDate
+      status = "completed";
+    }
   }
-  return "completed";
+  return status;
 });
 
 // Populate host and cohosts on find queries

@@ -12,7 +12,7 @@ import {
   getUserEventCounts,
 } from "../controllers/event.controller";
 import { isLoggedIn, protect } from "../middlewares/auth.middleware";
-import { uploadImage } from "../middlewares/image";
+import { uploadImage, uploadCohostImages } from "../middlewares/image";
 
 const allowedFields = [
   "title",
@@ -35,9 +35,16 @@ const allowedFields = [
 // Event router
 const eventRouter = express.Router();
 
-eventRouter
-  .route("/")
-  .post(protect, upload.single("image"), uploadImage("image"), createEvent);
+eventRouter.route("/").post(
+  protect,
+  upload.fields([
+    { name: "image", maxCount: 1 },
+    { name: "cohostImages", maxCount: 10 },
+  ]),
+  uploadImage("image"),
+  uploadCohostImages,
+  createEvent,
+);
 
 eventRouter.get("/my-events", protect, getMyEvents);
 
@@ -55,8 +62,12 @@ eventRouter
   .get(isLoggedIn, getEvent())
   .patch(
     protect,
-    upload.single("image"),
+    upload.fields([
+      { name: "image", maxCount: 1 },
+      { name: "cohostImages", maxCount: 10 },
+    ]),
     uploadImage("image"),
+    uploadCohostImages,
     filter(...allowedFields),
     updateEvent,
   );

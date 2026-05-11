@@ -4,8 +4,6 @@ import UserToken from "../models/usertokens.model";
 import AppError from "../utils/appError";
 import catchAsync from "../utils/catchAsync";
 import Email from "../utils/email";
-import Event from "../models/event.model";
-import Response from "../models/response.model";
 import { deleteImage } from "../middlewares/image";
 import {
   fetchRefreshToken,
