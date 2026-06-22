@@ -188,7 +188,7 @@ transactionSchema.index({ event: 1, type: 1, status: 1 });
 transactionSchema.index({ userId: 1, createdAt: -1 });
 
 // Pre-save middleware to calculate fee for chip-ins
-transactionSchema.pre("save", function () {
+transactionSchema.pre("save", async function () {
   if (this.isNew && this.type === "chip-in" && !this.fee) {
     this.fee = calculateFee(this.amount);
   }
@@ -207,13 +207,20 @@ transactionSchema.methods.isRefundable = function (): boolean {
 
 // Static method to calculate event balance from transactions
 transactionSchema.statics.getEventBalance = async function (
-  eventId: mongoose.Types.ObjectId,
+  eventId: string | mongoose.Types.ObjectId,
 ): Promise<number> {
+  let eventObjectId = eventId;
+
+  if (typeof eventObjectId === "string") {
+    eventObjectId = new mongoose.Types.ObjectId(eventObjectId);
+  }
+
   const result = await this.aggregate([
     {
       $match: {
-        event: eventId,
+        event: eventObjectId,
         status: "completed",
+        settledAt: { $ne: null },
       },
     },
     {
@@ -228,10 +235,13 @@ transactionSchema.statics.getEventBalance = async function (
   let withdrawals = 0;
 
   result.forEach((item) => {
-    if (item._id === "chip-in") {
-      chipIns = item.total;
-    } else if (item._id === "withdrawal") {
-      withdrawals = item.total;
+    switch (item._id) {
+      case "chip-in":
+        chipIns = item.total;
+        break;
+      case "withdrawal":
+        withdrawals = item.total;
+        break;
     }
   });
 

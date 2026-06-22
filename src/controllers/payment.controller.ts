@@ -2,6 +2,7 @@ import crypto from "crypto";
 import User from "../models/user.model";
 import Transaction from "../models/transaction.model";
 import Event from "../models/event.model";
+import Response from "../models/response.model";
 import AppError from "../utils/appError";
 import catchAsync from "../utils/catchAsync";
 import mongoose, { isValidObjectId } from "mongoose";
@@ -65,7 +66,7 @@ export const verifyBankAccount = catchAsync(async (req, res, next) => {
   }
 });
 
-export const updateBankDetails = catchAsync(async (req, res, next) => {
+export const updateUserBankDetails = catchAsync(async (req, res, next) => {
   const userID = res.locals.user._id;
   const user = await User.findById(userID);
   if (!user) {
@@ -187,13 +188,7 @@ export const withdraw = catchAsync(async (req, res, next) => {
   const user = res.locals.user;
   const { eventId, amount } = req.body;
 
-  if (!eventId) {
-    return next(new AppError("Event ID is required", 400));
-  }
-
-  if (!amount || Number(amount) <= 0) {
-    return next(new AppError("Withdrawal amount must be positive", 400));
-  }
+  if (!eventId) return next(new AppError("Event ID is required", 400));
 
   const requestedPayout = Number(amount);
 
@@ -615,6 +610,19 @@ export const verifyPayment = catchAsync(async (req, res, next) => {
         // Check if transaction exists
         if (!transaction) return next(new AppError("Chip-in not found", 404));
 
+        // Create or update response for the user with "going" status
+        await Response.findOneAndUpdate(
+          {
+            event: transaction.event._id,
+            user: transaction.userId,
+          },
+          {
+            status: "going",
+            amountPaid: transaction.amount,
+          },
+          { upsert: true, new: true },
+        );
+
         // Prepare response data
         data = handleFormatData(transaction);
         break;
@@ -679,7 +687,7 @@ export const paystackWebhook = catchAsync(async (req, res, _next) => {
         }
 
         // Update transaction status
-        await Transaction.findOneAndUpdate(
+        const completedTransaction = await Transaction.findOneAndUpdate(
           { paymentReference: reference },
           {
             status: "completed",
@@ -688,7 +696,23 @@ export const paystackWebhook = catchAsync(async (req, res, _next) => {
               gatewayResponse: verifiedData.gateway_response,
             },
           },
+          { new: true },
         );
+
+        // Create or update response for the user with "going" status
+        if (completedTransaction) {
+          await Response.findOneAndUpdate(
+            {
+              event: completedTransaction.event,
+              user: completedTransaction.userId,
+            },
+            {
+              status: "going",
+              amountPaid: completedTransaction.amount,
+            },
+            { upsert: true, new: true },
+          );
+        }
         break;
       case "ticket":
         // Handle ticket payment update here

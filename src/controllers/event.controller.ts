@@ -121,16 +121,6 @@ export const deleteEvent = catchAsync(async (req, res, next) => {
     );
   }
 
-  // Check if event that has started
-  if (new Date(event.startDate) <= new Date()) {
-    return next(
-      new AppError(
-        "Cannot delete event that has already started. Please contact support.",
-        403,
-      ),
-    );
-  }
-
   // Find and delete event
   await Event.findByIdAndDelete(eventId);
 
@@ -362,14 +352,35 @@ export const getMyEvents = catchAsync(async (req, res, _next) => {
 
   // Use aggregation for efficient pagination
   const results = await Event.aggregate([
-    // 1. Initial Filter
+    // 1. Lookup for CURRENT USER'S confirmed response (status: "going")
     {
-      $match: {
-        $or: [{ host: user._id }, { "cohosts.id": user._id }],
-        $and: [dateFilter],
+      $lookup: {
+        from: "responses",
+        let: { eventId: "$_id" },
+        pipeline: [
+          {
+            $match: {
+              $expr: {
+                $and: [
+                  { $eq: ["$event", "$$eventId"] },
+                  { $eq: ["$user", user._id] },
+                  { $eq: ["$status", "going"] },
+                ],
+              },
+            },
+          },
+        ],
+        as: "currentUserResponse",
       },
     },
-    // 2. Lookup for CURRENT USER'S response (to set userResponse)
+    // 2. Filter to only include events where user has confirmed attendance
+    {
+      $match: {
+        currentUserResponse: { $ne: [] },
+        ...dateFilter,
+      },
+    },
+    // 3. Lookup for CURRENT USER'S full response details (for userResponse field)
     {
       $lookup: {
         from: "responses",
@@ -386,7 +397,7 @@ export const getMyEvents = catchAsync(async (req, res, _next) => {
             },
           },
         ],
-        as: "currentUserResponse",
+        as: "userResponseDetails",
       },
     },
     // 3. Lookup for guests: first 10 guests and guest count
@@ -439,27 +450,12 @@ export const getMyEvents = catchAsync(async (req, res, _next) => {
     {
       $addFields: {
         userResponse: {
-          $ifNull: [{ $arrayElemAt: ["$currentUserResponse.status", 0] }, ""],
-        },
-        userRole: {
-          $cond: [
-            { $eq: ["$host", user._id] },
-            "host",
-            {
-              $cond: [
-                { $eq: ["$host.id", user._id] },
-                "host",
-                {
-                  $cond: [
-                    { $in: [user._id, { $ifNull: ["$cohosts.id", []] }] },
-                    "cohost",
-                    "guest",
-                  ],
-                },
-              ],
-            },
+          $ifNull: [
+            { $arrayElemAt: ["$userResponseDetails.status", 0] },
+            "going",
           ],
         },
+        userRole: "guest",
       },
     },
     { $sort: { createdAt: -1 } },
@@ -470,7 +466,7 @@ export const getMyEvents = catchAsync(async (req, res, _next) => {
         data: [
           { $skip: skip },
           { $limit: limit },
-          { $project: { currentUserResponse: 0 } },
+          { $project: { currentUserResponse: 0, userResponseDetails: 0 } },
         ],
       },
     },
@@ -483,8 +479,8 @@ export const getMyEvents = catchAsync(async (req, res, _next) => {
   const formattedEvents = events.map((event: any) => {
     const eventData = formatEventData(event, {
       skipGuests: true,
-      skipBalance: user.id !== event.host.id,
-      skipUpdateCount: user.id !== event.host.id,
+      skipBalance: true,
+      skipUpdateCount: true,
     });
     let status = "upcoming";
     if (event.startDate) {
@@ -550,11 +546,16 @@ export const updateEvent = catchAsync(async (req, res, next) => {
   }
 
   // Parse fields
-  if (req.body.cohosts) req.body.cohosts = JSON.parse(req.body.cohosts);
-  if (req.body.category) req.body.category = JSON.parse(req.body.category);
-  if (req.body.dressCode) req.body.dressCode = JSON.parse(req.body.dressCode);
-  if (req.body.location) req.body.location = JSON.parse(req.body.location);
-  if (req.body.chipInDetails)
+  // Parse fields
+  if (typeof req.body.cohosts === "string")
+    req.body.cohosts = JSON.parse(req.body.cohosts);
+  if (typeof req.body.category === "string")
+    req.body.category = JSON.parse(req.body.category);
+  if (typeof req.body.dressCode === "string")
+    req.body.dressCode = JSON.parse(req.body.dressCode);
+  if (typeof req.body.location === "string")
+    req.body.location = JSON.parse(req.body.location);
+  if (typeof req.body.chipInDetails === "string")
     req.body.chipInDetails = JSON.parse(req.body.chipInDetails);
 
   // Process cohosts

@@ -57,8 +57,13 @@ export const fetchAccessToken = (req: Request): string | undefined => {
 };
 
 // Fetch refresh token
-export const fetchRefreshToken = (req: Request): string | undefined =>
-  req.cookies[REFRESH_TOKEN_COOKIE];
+export const fetchRefreshToken = (req: Request): string | undefined => {
+  // Authorization
+  const authorization = req.headers.authorization;
+  // Check for token in authorization header
+  if (authorization && authorization.startsWith("Bearer"))
+    return authorization.split(" ")[1];
+};
 
 // Verify access token
 export const verifyAccessToken = (token: string) =>

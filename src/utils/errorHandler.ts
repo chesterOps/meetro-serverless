@@ -103,12 +103,13 @@ export default function errorHandler(
   }
 
   // Check environment and send appropriate response
-  switch (process.env.NODE_ENV) {
-    case "dev":
-      return devError(appError || err, res);
-    case "prod":
-      return prodError(appError || err, res);
-    default:
-      break;
-  }
+  devError(appError || err, res);
+  // switch (process.env.NODE_ENV) {
+  //   case "dev":
+  //     return devError(appError || err, res);
+  //   case "prod":
+  //     return prodError(appError || err, res);
+  //   default:
+  //     break;
+  // }
 }

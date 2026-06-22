@@ -1,4 +1,3 @@
-import cookieConfig from "../config/cookie";
 import User from "../models/user.model";
 import UserToken from "../models/usertokens.model";
 import AppError from "../utils/appError";
@@ -78,14 +77,12 @@ export const login = catchAsync(async (req, res, next) => {
   user.refreshToken = refreshToken;
   await user.save();
 
-  // Add refresh token to response
-  res.cookie("refresh-token", refreshToken, cookieConfig);
-
   // Send response
   res.status(200).json({
     status: "success",
     message: "Login successful",
     accessToken,
+    refreshToken,
   });
 });
 
@@ -129,14 +126,12 @@ export const signup = catchAsync(async (req, res, next) => {
   newUser.refreshToken = refreshToken;
   await newUser.save();
 
-  // Add refresh token to response
-  res.cookie("refresh-token", refreshToken, cookieConfig);
-
   // Send response
   res.status(201).json({
     status: "success",
     message: "Please verify your email to complete signup",
     accessToken,
+    refreshToken,
   });
 });
 
@@ -158,9 +153,6 @@ export const logout = catchAsync(async (req, res, _next) => {
       console.warn("Invalid refresh token during logout:");
     }
   }
-  const { maxAge, ...rest } = cookieConfig;
-  // Clear cookie
-  res.clearCookie("refresh-token", rest);
   // Send response
   res.sendStatus(204);
 });
@@ -344,13 +336,11 @@ export const refresh = catchAsync(async (req, res, next) => {
   user.refreshToken = newRefreshToken;
   await user.save({ validateBeforeSave: false });
 
-  // Set new refresh token in cookie
-  res.cookie("refresh-token", newRefreshToken, cookieConfig);
-
   // Send response
   res.status(200).json({
     status: "success",
     accessToken: newAccessToken,
+    refreshToken: newRefreshToken,
   });
 });
 
@@ -486,14 +476,12 @@ export const updatePassword = catchAsync(async (req, res, next) => {
   user.refreshToken = refreshToken;
   await user.save();
 
-  // Add refresh token to response
-  res.cookie("refresh-token", refreshToken, cookieConfig);
-
   // Send response
   res.status(200).json({
     status: "success",
     message: "Password updated successfully",
     accessToken,
+    refreshToken,
   });
 });
 
@@ -609,14 +597,12 @@ export const googleAuth = catchAsync(async (req, res, next) => {
     user.refreshToken = refreshToken;
     await user.save({ validateBeforeSave: false });
 
-    // Add refresh token to response
-    res.cookie("refresh-token", refreshToken, cookieConfig);
-
     // Send response
     res.status(200).json({
       status: "success",
       message: "Login successful",
       accessToken,
+      refreshToken,
     });
   } catch (error: any) {
     console.error("Google Auth Error:", error.message);

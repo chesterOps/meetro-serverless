@@ -45,7 +45,7 @@ const responseSchema = new mongoose.Schema<IResponse, ResponseModel>(
   },
 );
 
-responseSchema.pre(/^find/, function (this: mongoose.Query<any, any>) {
+responseSchema.pre(/^find/, async function (this: mongoose.Query<any, any>) {
   this.populate({
     path: "user",
     select: "firstName lastName email photo",
