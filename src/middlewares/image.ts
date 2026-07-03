@@ -76,51 +76,71 @@ export const uploadImage =
     next();
   };
 
-export const uploadCohostImages = async (
+export const uploadEventImages = async (
   req: Request,
   _res: Response,
   next: NextFunction,
 ) => {
   try {
-    if (typeof req.body.cohosts === "string") {
-      req.body.cohosts = JSON.parse(req.body.cohosts);
-    }
-
-    const cohostFiles = (req.files as any)?.cohostImages;
-    if (!Array.isArray(cohostFiles) || cohostFiles.length === 0) {
-      return next();
-    }
-
-    if (!Array.isArray(req.body.cohosts)) {
-      return next();
-    }
-
-    const uploadedPhotos: string[] = [];
-    for (const file of cohostFiles) {
+    const imageFiles = (req.files as any)?.image;
+    if (Array.isArray(imageFiles) && imageFiles.length > 0) {
+      const imageFile = imageFiles[0];
       try {
-        const fileName = file.originalname.split(".");
+        const fileName = imageFile.originalname.split(".");
         fileName.pop();
         const sanitizedName = fileName.join("").replace(/[^a-zA-Z0-9]/g, "_");
         const timestamp = Date.now();
         const public_id = `${timestamp}-${sanitizedName}`;
         const result = (await uploadToCloudinary(
-          file.buffer,
+          imageFile.buffer,
           "meetro",
           public_id,
         )) as CloudinaryUploadResult;
-        uploadedPhotos.push(result.secure_url);
+        req.body.image = {
+          public_id: result.public_id,
+          url: result.secure_url,
+        };
       } catch (error: any) {
-        console.error("Cohost image upload failed:", error.message);
-        uploadedPhotos.push("");
+        console.error("Event image upload failed:", error.message);
       }
+    } else if (req.body.image && typeof req.body.image === "string") {
+      req.body.image = { url: req.body.image };
     }
 
-    req.body.cohosts = req.body.cohosts.map((cohost: any, idx: number) => ({
-      ...cohost,
-      photo: cohost.photo ?? uploadedPhotos[idx] ?? cohost.photo,
-    }));
+    const cohostFiles = (req.files as any)?.cohostImages;
+
+    if (Array.isArray(cohostFiles) && cohostFiles.length > 0) {
+      if (!Array.isArray(req.body.cohosts)) {
+        return next();
+      }
+
+      const uploadedPhotos: string[] = [];
+      for (const file of cohostFiles) {
+        try {
+          const fileName = file.originalname.split(".");
+          fileName.pop();
+          const sanitizedName = fileName.join("").replace(/[^a-zA-Z0-9]/g, "_");
+          const timestamp = Date.now();
+          const public_id = `${timestamp}-${sanitizedName}`;
+          const result = (await uploadToCloudinary(
+            file.buffer,
+            "meetro",
+            public_id,
+          )) as CloudinaryUploadResult;
+          uploadedPhotos.push(result.secure_url);
+        } catch (error: any) {
+          console.error("Cohost image upload failed:", error.message);
+          uploadedPhotos.push("");
+        }
+      }
+
+      req.body.cohosts = req.body.cohosts.map((cohost: any, idx: number) => ({
+        ...cohost,
+        photo: uploadedPhotos[idx] || "",
+      }));
+    }
   } catch (error: any) {
-    console.error("Failed to process cohost images:", error.message);
+    console.error("Failed to process event images:", error.message);
   }
 
   next();

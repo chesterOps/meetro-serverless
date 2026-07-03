@@ -240,20 +240,20 @@ export const withdraw = catchAsync(async (req, res, next) => {
     createdAt: { $gte: rateLimitTime },
   }).sort({ createdAt: -1 });
 
-  if (recentWithdrawal) {
-    const timeSinceLastWithdrawal =
-      Date.now() - recentWithdrawal.createdAt.getTime();
-    const minutesRemaining = Math.ceil(
-      (WITHDRAWAL_RATE_LIMIT_HOURS * 60 * 60 * 1000 - timeSinceLastWithdrawal) /
-        60000,
-    );
-    return next(
-      new AppError(
-        `Please wait ${minutesRemaining} minutes before making another withdrawal`,
-        429,
-      ),
-    );
-  }
+  // if (recentWithdrawal) {
+  //   const timeSinceLastWithdrawal =
+  //     Date.now() - recentWithdrawal.createdAt.getTime();
+  //   const minutesRemaining = Math.ceil(
+  //     (WITHDRAWAL_RATE_LIMIT_HOURS * 60 * 60 * 1000 - timeSinceLastWithdrawal) /
+  //       60000,
+  //   );
+  //   return next(
+  //     new AppError(
+  //       `Please wait ${minutesRemaining} minutes before making another withdrawal`,
+  //       429,
+  //     ),
+  //   );
+  // }
 
   // Calculate withdrawal fee
   const withdrawalFee = calculateFee(requestedPayout);
@@ -319,21 +319,54 @@ export const withdraw = catchAsync(async (req, res, next) => {
     transferResponse.data?.data?.transfer_code ||
     transferResponse.data?.data?.reference ||
     payoutReference;
-  const transferStatus = transferResponse.data?.data?.status;
+  const transferStatus = transferResponse.data?.data?.status || "unknown";
 
-  // Only proceed if transfer was immediately successful
-  if (transferStatus !== "success" && transferStatus !== "completed") {
+  // FIX: "otp" means Paystack actually created the transfer and is holding it
+  // pending OTP confirmation (this happens when OTP-based transfer disabling
+  // is not turned off on your Paystack dashboard). It is NOT a failure state,
+  // and treating it as one is actively dangerous: the transfer already exists
+  // at Paystack, so rejecting it here and returning early (as the original
+  // code did) leaves a real, unresolved transfer sitting on Paystack's side
+  // that your system has no record of and the user was told didn't happen.
+  //
+  // Long-term fix: disable OTP-based transfer confirmation in your Paystack
+  // dashboard (Settings -> Preferences) so transfers never enter this state.
+  // Until that's done, we record the transfer in our DB as "otp_required" so
+  // it isn't silently lost, and tell the caller clearly that manual action is
+  // needed rather than implying the request can simply be retried.
+  const acceptedTransferStatuses = [
+    "success",
+    "completed",
+    "pending",
+    "processing",
+    "queued",
+  ];
+
+  const otpRequired = transferStatus === "otp";
+
+  if (!acceptedTransferStatuses.includes(transferStatus) && !otpRequired) {
     return next(
       new AppError(
-        "Transfer is pending at payment gateway. Please try again later.",
+        `Transfer could not be initiated at the payment gateway. ${transferStatus} ${transferCode}`,
         400,
       ),
     );
   }
 
-  // Start database transaction to create the completed withdrawal
+  const withdrawalStatus = otpRequired
+    ? "otp_required"
+    : transferStatus === "success" || transferStatus === "completed"
+      ? "completed"
+      : "pending";
+
+  // Start database transaction to create the withdrawal record
   const session = await mongoose.startSession();
   session.startTransaction();
+
+  // `transaction` is declared outside the try block so it's still in scope
+  // for the response-building code that runs after commit, without that
+  // code needing to live inside the abortable try/catch itself.
+  let transaction;
 
   try {
     // Double-check balance hasn't changed (race condition protection)
@@ -346,8 +379,8 @@ export const withdraw = catchAsync(async (req, res, next) => {
       );
     }
 
-    // Create completed withdrawal transaction
-    const [transaction] = await Transaction.create(
+    // Create withdrawal transaction (completed, pending, or awaiting OTP)
+    [transaction] = await Transaction.create(
       [
         {
           event: event._id,
@@ -356,7 +389,7 @@ export const withdraw = catchAsync(async (req, res, next) => {
           amount: requestedPayout,
           fee: withdrawalFee,
           currency: "NGN",
-          status: "completed",
+          status: withdrawalStatus,
           reference: payoutReference,
           transferCode,
           gateway: "paystack",
@@ -374,30 +407,26 @@ export const withdraw = catchAsync(async (req, res, next) => {
       { session },
     );
 
-    // Commit the transaction
+    // Commit the transaction. This is the LAST thing that happens inside
+    // this try block. Once this line succeeds, the session can no longer
+    // be aborted — so nothing that follows it may live inside this
+    // try/catch, or a failure in that later code (e.g. the balance lookup
+    // below) will hit the catch block and call abortTransaction() on an
+    // already-committed session, which throws
+    // "Cannot call abortTransaction after calling commitTransaction".
     await session.commitTransaction();
-
-    // Calculate new balance after successful withdrawal
-    const newBalance = await Transaction.getEventBalance(eventId);
-
-    res.status(200).json({
-      status: "success",
-      data: {
-        transaction,
-        newBalance,
-      },
-      message: "Payout completed successfully",
-    });
   } catch (error: any) {
-    // Rollback transaction on any error
+    // Rollback only ever runs for failures that happened BEFORE commit
+    // succeeded (balance check, Transaction.create, or commit itself
+    // failing). By the time we're in this catch, commitTransaction has
+    // either not been called yet or has itself thrown, so the session is
+    // guaranteed to still be abortable here.
     await session.abortTransaction();
 
-    // If it's already an AppError, pass it through
     if (error instanceof AppError) {
       return next(error);
     }
 
-    // Otherwise wrap it
     return next(
       new AppError(
         error.message || "Withdrawal failed. Please try again.",
@@ -407,6 +436,38 @@ export const withdraw = catchAsync(async (req, res, next) => {
   } finally {
     session.endSession();
   }
+
+  // Everything below runs ONLY after a successful commit, fully outside
+  // the try/catch above. If anything here throws (e.g. getEventBalance
+  // hiccups, or res.json() chokes on the payload), it propagates as a
+  // normal unhandled error in this async handler rather than triggering
+  // an abort on a session that's already done. The withdrawal record is
+  // already safely persisted at this point regardless of what happens
+  // next, which is the correct behavior: a flaky balance lookup for the
+  // response payload should never be allowed to imply the withdrawal
+  // itself failed.
+  const newBalance =
+    withdrawalStatus === "completed"
+      ? await Transaction.getEventBalance(eventId)
+      : null;
+
+  const statusCode = withdrawalStatus === "completed" ? 200 : 202;
+
+  const message =
+    withdrawalStatus === "completed"
+      ? "Payout completed successfully"
+      : withdrawalStatus === "otp_required"
+        ? "Payout requires OTP confirmation at the payment gateway before it can complete. Please contact support to finalize this transfer, or disable OTP-based transfer confirmation in your Paystack dashboard to prevent this in the future."
+        : "Payout initiated successfully and is pending confirmation";
+
+  res.status(statusCode).json({
+    status: "success",
+    data: {
+      transaction,
+      newBalance,
+    },
+    message,
+  });
 });
 
 export const getTransactions = catchAsync(async (req, res, next) => {

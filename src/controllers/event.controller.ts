@@ -5,6 +5,7 @@ import User from "../models/user.model";
 import AppError from "../utils/appError";
 import catchAsync from "../utils/catchAsync";
 import Email from "../utils/email";
+
 import { deleteImage } from "../middlewares/image";
 import { isValidObjectId } from "mongoose";
 import { paystack } from "../paystack/paystackSettlementPoller";
@@ -18,6 +19,25 @@ const formatGuestData = (user: any) => {
   };
   if (user.photo) data.photo = user.photo.url;
   return data;
+};
+
+// Helper function to normalize cohost data
+const normalizeCohost = (cohost: any, matchedUser?: any) => {
+  const formattedCohost: any = {
+    role: cohost.role,
+  };
+
+  if (matchedUser) {
+    formattedCohost.id = matchedUser._id;
+  } else if (cohost.id) {
+    formattedCohost.id = cohost.id;
+  }
+
+  if (cohost.name) formattedCohost.name = cohost.name;
+  if (cohost.email) formattedCohost.email = cohost.email;
+  if (cohost.photo) formattedCohost.photo = cohost.photo;
+
+  return formattedCohost;
 };
 
 // Helper function to format event data for response
@@ -67,6 +87,7 @@ const formatEventData = (
           ...formattedUser,
           id: cohost.id._id,
           role: cohost.role,
+          ...(cohost.photo ? { photo: cohost.photo } : {}),
         };
       }
       // If not populated or just an email invite
@@ -132,17 +153,6 @@ export const deleteEvent = catchAsync(async (req, res, next) => {
 });
 
 export const createEvent = catchAsync(async (req, res, next) => {
-  // Parse fields
-  if (typeof req.body.cohosts === "string")
-    req.body.cohosts = JSON.parse(req.body.cohosts);
-  if (typeof req.body.category === "string")
-    req.body.category = JSON.parse(req.body.category);
-  if (typeof req.body.dressCode === "string")
-    req.body.dressCode = JSON.parse(req.body.dressCode);
-  if (typeof req.body.location === "string")
-    req.body.location = JSON.parse(req.body.location);
-  if (typeof req.body.chipInDetails === "string")
-    req.body.chipInDetails = JSON.parse(req.body.chipInDetails);
   // If meetingURL is provided, set eventType to "online"
   if (req.body.meetingURL) req.body.eventType = "online";
   else req.body.eventType = "offline";
@@ -191,11 +201,12 @@ export const createEvent = catchAsync(async (req, res, next) => {
         const matchedUser = cohostUsers.find(
           (user) => user.email === cohost.email,
         );
-        if (matchedUser) {
-          return { id: matchedUser._id, role: cohost.role };
-        }
-        return cohost;
+        return normalizeCohost(cohost, matchedUser);
       });
+    } else {
+      req.body.cohosts = req.body.cohosts.map((cohost: any) =>
+        normalizeCohost(cohost),
+      );
     }
   } else {
     req.body.cohosts = [];
@@ -545,19 +556,6 @@ export const updateEvent = catchAsync(async (req, res, next) => {
     );
   }
 
-  // Parse fields
-  // Parse fields
-  if (typeof req.body.cohosts === "string")
-    req.body.cohosts = JSON.parse(req.body.cohosts);
-  if (typeof req.body.category === "string")
-    req.body.category = JSON.parse(req.body.category);
-  if (typeof req.body.dressCode === "string")
-    req.body.dressCode = JSON.parse(req.body.dressCode);
-  if (typeof req.body.location === "string")
-    req.body.location = JSON.parse(req.body.location);
-  if (typeof req.body.chipInDetails === "string")
-    req.body.chipInDetails = JSON.parse(req.body.chipInDetails);
-
   // Process cohosts
   if (req.body.cohosts && req.body.cohosts.length > 0) {
     const cohostUsers = await User.find({
@@ -568,11 +566,12 @@ export const updateEvent = catchAsync(async (req, res, next) => {
         const matchedUser = cohostUsers.find(
           (user) => user.email === cohost.email,
         );
-        if (matchedUser) {
-          return { id: matchedUser._id, role: cohost.role };
-        }
-        return cohost;
+        return normalizeCohost(cohost, matchedUser);
       });
+    } else {
+      req.body.cohosts = req.body.cohosts.map((cohost: any) =>
+        normalizeCohost(cohost),
+      );
     }
   } else {
     req.body.cohosts = [];

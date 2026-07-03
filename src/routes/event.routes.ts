@@ -12,7 +12,8 @@ import {
   getUserEventCounts,
 } from "../controllers/event.controller";
 import { isLoggedIn, protect } from "../middlewares/auth.middleware";
-import { uploadImage, uploadCohostImages } from "../middlewares/image";
+import { uploadEventImages } from "../middlewares/image";
+import jsonBodyParse from "../middlewares/jsonParser";
 
 const allowedFields = [
   "title",
@@ -21,6 +22,7 @@ const allowedFields = [
   "endDate",
   "location",
   "image",
+  "cohostImages",
   "meetingURL",
   "dressCode",
   "socials",
@@ -35,16 +37,21 @@ const allowedFields = [
 // Event router
 const eventRouter = express.Router();
 
-eventRouter.route("/").post(
-  protect,
-  upload.fields([
-    { name: "image", maxCount: 1 },
-    { name: "cohostImages", maxCount: 10 },
-  ]),
-  uploadImage("image"),
-  uploadCohostImages,
-  createEvent,
-);
+eventRouter
+  .route("/")
+  .post(
+    protect,
+    jsonBodyParse(
+      "cohosts",
+      "category",
+      "dressCode",
+      "location",
+      "chipInDetails",
+    ),
+    upload.any(),
+    uploadEventImages,
+    createEvent,
+  );
 
 eventRouter.get("/my-events", protect, getMyEvents);
 
@@ -62,12 +69,15 @@ eventRouter
   .get(isLoggedIn, getEvent())
   .patch(
     protect,
-    upload.fields([
-      { name: "image", maxCount: 1 },
-      { name: "cohostImages", maxCount: 10 },
-    ]),
-    uploadImage("image"),
-    uploadCohostImages,
+    jsonBodyParse(
+      "cohosts",
+      "category",
+      "dressCode",
+      "location",
+      "chipInDetails",
+    ),
+    upload.any(),
+    uploadEventImages,
     filter(...allowedFields),
     updateEvent,
   );
