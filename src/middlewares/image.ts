@@ -20,6 +20,13 @@ const uploadToCloudinary = (
     streamifier.createReadStream(buffer).pipe(stream);
   });
 
+const buildPublicId = (originalname: string) => {
+  const parts = originalname.split(".");
+  parts.pop(); // remove extension
+  const sanitized = parts.join("").replace(/[^a-zA-Z0-9]/g, "_");
+  return `${Date.now()}-${sanitized}`;
+};
+
 export const uploadImage =
   (field: string) =>
   async (req: Request, _res: Response, next: NextFunction) => {
@@ -32,16 +39,7 @@ export const uploadImage =
     // Check for single image file
     if (file) {
       try {
-        // Split file name by "." to remove extension
-        const fileName = file.originalname.split(".");
-        // Remove the last part (extension)
-        fileName.pop();
-        // Sanitize filename - remove special characters
-        const sanitizedName = fileName.join("").replace(/[^a-zA-Z0-9]/g, "_");
-        // Create timestamp
-        const timestamp = Date.now();
-        // Create public_id
-        const public_id = `${timestamp}-${sanitizedName}`;
+        const public_id = buildPublicId(file.originalname);
 
         // Upload to Cloudinary
         const result = (await uploadToCloudinary(
@@ -76,21 +74,34 @@ export const uploadImage =
     next();
   };
 
+/**
+ * Handles the main event image plus per-cohost images.
+ *
+ * Expects req.files to be an ARRAY (from upload.any()), not the
+ * fieldname-keyed object you'd get from upload.fields().
+ *
+ * Event image file field: "image"
+ * Cohost image file fields: "cohostImage_<index>" where <index> matches
+ * the cohost's position in req.body.cohosts (which must already be a
+ * parsed array by the time this runs).
+ *
+ * If a cohost already has a photo and no new file is uploaded for them,
+ * the client should resend the existing { public_id, url } photo object
+ * in req.body.cohosts[i].photo so it's preserved as-is.
+ */
 export const uploadEventImages = async (
   req: Request,
   _res: Response,
   next: NextFunction,
 ) => {
   try {
-    const imageFiles = (req.files as any)?.image;
-    if (Array.isArray(imageFiles) && imageFiles.length > 0) {
-      const imageFile = imageFiles[0];
+    const files = (req.files as Express.Multer.File[]) || [];
+
+    // --- Event image ---
+    const imageFile = files.find((f) => f.fieldname === "image");
+    if (imageFile) {
       try {
-        const fileName = imageFile.originalname.split(".");
-        fileName.pop();
-        const sanitizedName = fileName.join("").replace(/[^a-zA-Z0-9]/g, "_");
-        const timestamp = Date.now();
-        const public_id = `${timestamp}-${sanitizedName}`;
+        const public_id = buildPublicId(imageFile.originalname);
         const result = (await uploadToCloudinary(
           imageFile.buffer,
           "meetro",
@@ -107,37 +118,35 @@ export const uploadEventImages = async (
       req.body.image = { url: req.body.image };
     }
 
-    const cohostFiles = (req.files as any)?.cohostImages;
+    // --- Cohost images ---
+    if (Array.isArray(req.body.cohosts)) {
+      const cohostImageFiles = files.filter((f) =>
+        /^cohostImage_\d+$/.test(f.fieldname),
+      );
 
-    if (Array.isArray(cohostFiles) && cohostFiles.length > 0) {
-      if (!Array.isArray(req.body.cohosts)) {
-        return next();
-      }
+      await Promise.all(
+        cohostImageFiles.map(async (file) => {
+          const idx = parseInt(file.fieldname.split("_")[1], 10);
+          if (Number.isNaN(idx) || !req.body.cohosts[idx]) return;
 
-      const uploadedPhotos: string[] = [];
-      for (const file of cohostFiles) {
-        try {
-          const fileName = file.originalname.split(".");
-          fileName.pop();
-          const sanitizedName = fileName.join("").replace(/[^a-zA-Z0-9]/g, "_");
-          const timestamp = Date.now();
-          const public_id = `${timestamp}-${sanitizedName}`;
-          const result = (await uploadToCloudinary(
-            file.buffer,
-            "meetro",
-            public_id,
-          )) as CloudinaryUploadResult;
-          uploadedPhotos.push(result.secure_url);
-        } catch (error: any) {
-          console.error("Cohost image upload failed:", error.message);
-          uploadedPhotos.push("");
-        }
-      }
+          try {
+            const public_id = buildPublicId(file.originalname);
+            const result = (await uploadToCloudinary(
+              file.buffer,
+              "meetro",
+              public_id,
+            )) as CloudinaryUploadResult;
 
-      req.body.cohosts = req.body.cohosts.map((cohost: any, idx: number) => ({
-        ...cohost,
-        photo: uploadedPhotos[idx] || "",
-      }));
+            // New upload overrides whatever photo value the client sent
+            req.body.cohosts[idx].photo = {
+              public_id: result.public_id,
+              url: result.secure_url,
+            };
+          } catch (error: any) {
+            console.error(`Cohost[${idx}] image upload failed:`, error.message);
+          }
+        }),
+      );
     }
   } catch (error: any) {
     console.error("Failed to process event images:", error.message);
@@ -146,10 +155,10 @@ export const uploadEventImages = async (
   next();
 };
 
-export const deleteImage = async (image: string) => {
+export const deleteImage = async (publicId: string) => {
   try {
     // Delete image from cloudinary
-    await cloudinary.api.delete_resources([image]);
+    await cloudinary.api.delete_resources([publicId]);
   } catch (err) {
     console.log("Error deleting image:", err);
   }

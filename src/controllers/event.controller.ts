@@ -12,10 +12,22 @@ import { paystack } from "../paystack/paystackSettlementPoller";
 import { buildICS, formatDate, formatTime, toBase64 } from "../utils/helpers";
 
 // Helper function to format guest data for response
-const formatGuestData = (user: any) => {
+const formatGuestData = (
+  user: any,
+  guestFallback?: { guestName?: string; guestEmail?: string },
+) => {
+  if (!user) {
+    return {
+      name: guestFallback?.guestName || guestFallback?.guestEmail || "Guest",
+      email: guestFallback?.guestEmail,
+      hasAccount: false,
+    };
+  }
+
   const data: { [key: string]: any } = {
     name: `${user.firstName} ${user.lastName}`,
     email: user.email,
+    hasAccount: true,
   };
   if (user.photo) data.photo = user.photo.url;
   return data;
@@ -35,7 +47,9 @@ const normalizeCohost = (cohost: any, matchedUser?: any) => {
 
   if (cohost.name) formattedCohost.name = cohost.name;
   if (cohost.email) formattedCohost.email = cohost.email;
-  if (cohost.photo) formattedCohost.photo = cohost.photo;
+  // photo is { public_id, url } — either freshly uploaded by
+  // uploadEventImages, or resent as-is by the client to preserve it
+  if (cohost.photo && cohost.photo.url) formattedCohost.photo = cohost.photo;
 
   return formattedCohost;
 };
@@ -47,6 +61,11 @@ const formatEventData = (
     skipGuests?: boolean;
     skipUpdateCount?: boolean;
     skipBalance?: boolean;
+    // When true, cohost.photo is left as the raw { public_id, url }
+    // object instead of being flattened to a URL string. Used for the
+    // host-only management view, where the edit form needs public_id
+    // to correctly diff/preserve cohost photos on save.
+    rawCohostPhotos?: boolean;
   },
 ) => {
   const eventObj = event.toObject ? event.toObject() : { ...event };
@@ -67,7 +86,10 @@ const formatEventData = (
   // Format guests to include user details
   if (!options?.skipGuests && eventObj.guests && eventObj.guests.length > 0) {
     eventObj.guests = eventObj.guests.map((guest: any) => {
-      const user = formatGuestData(guest.user);
+      const user = formatGuestData(guest.user, {
+        guestName: guest.guestName,
+        guestEmail: guest.guestEmail,
+      });
 
       if (!options?.skipBalance) {
         user.amountPaid = guest.amountPaid || 0;
@@ -87,7 +109,14 @@ const formatEventData = (
           ...formattedUser,
           id: cohost.id._id,
           role: cohost.role,
-          ...(cohost.photo ? { photo: cohost.photo } : {}),
+          hasAccount: cohost.hasAccount,
+          ...(cohost.photo
+            ? {
+                photo: options?.rawCohostPhotos
+                  ? cohost.photo
+                  : cohost.photo.url,
+              }
+            : {}),
         };
       }
       // If not populated or just an email invite
@@ -95,8 +124,9 @@ const formatEventData = (
         id: cohost.id,
         name: cohost.name,
         email: cohost.email,
-        photo: cohost.photo,
+        photo: options?.rawCohostPhotos ? cohost.photo : cohost.photo?.url,
         role: cohost.role,
+        hasAccount: cohost.hasAccount,
       };
     });
   }
@@ -160,6 +190,10 @@ export const createEvent = catchAsync(async (req, res, next) => {
   const userId = res.locals.user._id;
   req.body.host = userId;
 
+  if (typeof req.body.isPrivate === "string") {
+    req.body.isPrivate = req.body.isPrivate === "true";
+  }
+
   // Default isPrivate to true if not provided
   req.body.isPrivate ??= true;
 
@@ -215,21 +249,49 @@ export const createEvent = catchAsync(async (req, res, next) => {
   // Create event
   const event = await Event.create(req.body);
 
-  // Collect all users who should be marked as "going"
-  const usersToMarkGoing = new Set<string>();
-  if (event.host) usersToMarkGoing.add(event.host._id.toString()); // Host
+  // Collect "going" response payloads for host + all cohosts.
+  // Host and account-linked cohosts get a user-linked response;
+  // no-account cohosts get a guestEmail-linked response instead.
+  const responsesToCreate: any[] = [];
+  const seenUserIds = new Set<string>();
+
+  if (event.host) {
+    responsesToCreate.push({
+      event: event._id,
+      user: event.host,
+      status: "going",
+    });
+    seenUserIds.add(event.host.toString());
+  }
+
   if (event.cohosts && event.cohosts.length > 0) {
-    event.cohosts.forEach((cohost) => {
-      if (cohost.id) usersToMarkGoing.add(cohost.id.toString());
+    event.cohosts.forEach((cohost: any) => {
+      if (cohost.id) {
+        const idStr = cohost.id.toString();
+        if (!seenUserIds.has(idStr)) {
+          responsesToCreate.push({
+            event: event._id,
+            user: cohost.id,
+            status: "going",
+          });
+          seenUserIds.add(idStr);
+        }
+      } else if (cohost.email) {
+        responsesToCreate.push({
+          event: event._id,
+          guestEmail: cohost.email,
+          guestName: cohost.name,
+          status: "going",
+        });
+      }
     });
   }
 
-  // Create "going" responses for all organizers
-  const responsePromises = Array.from(usersToMarkGoing).map((user) =>
-    Response.create({
-      event: event._id,
-      user,
-      status: "going",
+  // Create all responses, ignoring duplicate-key errors (e.g. same
+  // email listed twice) so one bad entry doesn't fail the whole batch
+  const responsePromises = responsesToCreate.map((data) =>
+    Response.create(data).catch((err: any) => {
+      if (err.code !== 11000) throw err;
     }),
   );
 
@@ -287,10 +349,14 @@ export const getEvent = (isProtected = false) =>
         (cohost: any) => cohost.id?.toString() === user._id.toString(),
       );
 
-    // Format event data - hide balance from non-hosts
+    // Format event data - hide balance from non-hosts.
+    // rawCohostPhotos: only the protected/management view needs the raw
+    // { public_id, url } cohost photo object; the public view keeps it
+    // flattened to a plain URL string.
     const eventData = formatEventData(event, {
       skipUpdateCount: !isHost,
       skipBalance: !isHost,
+      rawCohostPhotos: isProtected,
     });
 
     // If user is host, add balance and total chip-ins to response
@@ -556,6 +622,12 @@ export const updateEvent = catchAsync(async (req, res, next) => {
     );
   }
 
+  // Capture existing cohost photos BEFORE they get overwritten below,
+  // keyed by public_id so we can diff against the incoming set later
+  const oldCohostPublicIds = new Set(
+    (event.cohosts || []).map((c: any) => c.photo?.public_id).filter(Boolean),
+  );
+
   // Process cohosts
   if (req.body.cohosts && req.body.cohosts.length > 0) {
     const cohostUsers = await User.find({
@@ -577,7 +649,23 @@ export const updateEvent = catchAsync(async (req, res, next) => {
     req.body.cohosts = [];
   }
 
-  // Check for new image and delete old image if necessary
+  // Diff: any old cohost photo not present in the new cohosts list
+  // (either the cohost was removed, or their photo was replaced) gets deleted
+  const newCohostPublicIds = new Set(
+    req.body.cohosts.map((c: any) => c.photo?.public_id).filter(Boolean),
+  );
+
+  const cohostPhotosToDelete = Array.from(oldCohostPublicIds).filter(
+    (publicId) => !newCohostPublicIds.has(publicId),
+  );
+
+  if (cohostPhotosToDelete.length > 0) {
+    await Promise.all(
+      cohostPhotosToDelete.map((publicId) => deleteImage(publicId as string)),
+    );
+  }
+
+  // Check for new event image and delete old image if necessary
   if (req.body.image && event.image && event.image.public_id)
     await deleteImage(event.image.public_id);
 
@@ -611,7 +699,6 @@ export const updateEvent = catchAsync(async (req, res, next) => {
     data: eventData,
   });
 });
-
 export const getUserEventCounts = catchAsync(async (_req, res, _next) => {
   const user = res.locals.user;
   // Get user events count

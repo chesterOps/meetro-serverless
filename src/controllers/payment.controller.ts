@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import User from "../models/user.model";
-import Transaction from "../models/transaction.model";
+import Transaction, { ITransaction } from "../models/transaction.model";
 import Event from "../models/event.model";
 import Response from "../models/response.model";
 import AppError from "../utils/appError";
@@ -12,6 +12,7 @@ import { calculateFee } from "../utils/helpers";
 // Withdrawal configuration constants
 const MIN_WITHDRAWAL_AMOUNT = 1000; // Minimum ₦1,000
 const WITHDRAWAL_RATE_LIMIT_HOURS = 1; // 1 hour between withdrawals
+
 function handleFormatData(donation: any) {
   const data = { ...donation.toObject() };
   data.event = {
@@ -148,10 +149,13 @@ export const chipin = catchAsync(async (req, res, next) => {
     return next(new AppError("Failed to create transaction", 500));
   }
   try {
+    let totalAmountKobo;
+    if (event.feeResponsibility === "host") {
+      totalAmountKobo = Math.round(amount * 100);
+    } else {
+      totalAmountKobo = Math.round((Number(amount) + transaction.fee!) * 100);
+    }
     // Create paystack payment link
-    const totalAmountKobo = Math.round(
-      (Number(amount) + transaction.fee!) * 100,
-    );
     const response = await paystack.post("/transaction/initialize", {
       email,
       amount: totalAmountKobo, // Amount in kobo
@@ -196,7 +200,6 @@ export const withdraw = catchAsync(async (req, res, next) => {
     return next(new AppError("Withdrawal amount must be positive", 400));
   }
 
-  // Validate minimum withdrawal amount
   if (requestedPayout < MIN_WITHDRAWAL_AMOUNT) {
     return next(
       new AppError(
@@ -206,8 +209,11 @@ export const withdraw = catchAsync(async (req, res, next) => {
     );
   }
 
+  // feeResponsibility determines whether the platform fee comes out of
+  // this withdrawal (host bears it) or was already collected from guests
+  // at chip-in time (guests bear it, so the host gets the full amount).
   const event = await Event.findById(eventId).select(
-    "host chipInDetails title",
+    "host chipInDetails title feeResponsibility",
   );
 
   if (!event) return next(new AppError("Event not found", 404));
@@ -230,7 +236,6 @@ export const withdraw = catchAsync(async (req, res, next) => {
     );
   }
 
-  // Rate limiting: Check for recent withdrawals
   const rateLimitTime = new Date(
     Date.now() - WITHDRAWAL_RATE_LIMIT_HOURS * 60 * 60 * 1000,
   );
@@ -255,11 +260,12 @@ export const withdraw = catchAsync(async (req, res, next) => {
   //   );
   // }
 
-  // Calculate withdrawal fee
-  const withdrawalFee = calculateFee(requestedPayout);
+  // "guests": fee already collected on top at checkout -> full amount to host.
+  // "host" (default): fee never collected upfront -> deducted here, as before.
+  const hostBearsFee = event.feeResponsibility !== "guests";
+  const withdrawalFee = hostBearsFee ? calculateFee(requestedPayout) : 0;
   const netPayout = requestedPayout - withdrawalFee;
 
-  // Ensure net payout is positive after fee deduction
   if (netPayout <= 0) {
     return next(
       new AppError(
@@ -274,7 +280,6 @@ export const withdraw = catchAsync(async (req, res, next) => {
     .randomBytes(8)
     .toString("hex")}`;
 
-  // Check available balance before calling Paystack
   const currentBalance = await Transaction.getEventBalance(eventId);
 
   if (!currentBalance || currentBalance <= 0) {
@@ -290,7 +295,6 @@ export const withdraw = catchAsync(async (req, res, next) => {
     );
   }
 
-  // Call Paystack transfer first - no DB record until success
   let transferResponse;
   try {
     transferResponse = await paystack.post("/transfer", {
@@ -315,25 +319,13 @@ export const withdraw = catchAsync(async (req, res, next) => {
     return next(new AppError("Failed to initiate payout transfer", 500));
   }
 
-  const transferCode =
+  const transferCode: string =
     transferResponse.data?.data?.transfer_code ||
     transferResponse.data?.data?.reference ||
     payoutReference;
-  const transferStatus = transferResponse.data?.data?.status || "unknown";
+  const transferStatus: string =
+    transferResponse.data?.data?.status || "unknown";
 
-  // FIX: "otp" means Paystack actually created the transfer and is holding it
-  // pending OTP confirmation (this happens when OTP-based transfer disabling
-  // is not turned off on your Paystack dashboard). It is NOT a failure state,
-  // and treating it as one is actively dangerous: the transfer already exists
-  // at Paystack, so rejecting it here and returning early (as the original
-  // code did) leaves a real, unresolved transfer sitting on Paystack's side
-  // that your system has no record of and the user was told didn't happen.
-  //
-  // Long-term fix: disable OTP-based transfer confirmation in your Paystack
-  // dashboard (Settings -> Preferences) so transfers never enter this state.
-  // Until that's done, we record the transfer in our DB as "otp_required" so
-  // it isn't silently lost, and tell the caller clearly that manual action is
-  // needed rather than implying the request can simply be retried.
   const acceptedTransferStatuses = [
     "success",
     "completed",
@@ -342,9 +334,7 @@ export const withdraw = catchAsync(async (req, res, next) => {
     "queued",
   ];
 
-  const otpRequired = transferStatus === "otp";
-
-  if (!acceptedTransferStatuses.includes(transferStatus) && !otpRequired) {
+  if (!acceptedTransferStatuses.includes(transferStatus)) {
     return next(
       new AppError(
         `Transfer could not be initiated at the payment gateway. ${transferStatus} ${transferCode}`,
@@ -353,23 +343,18 @@ export const withdraw = catchAsync(async (req, res, next) => {
     );
   }
 
-  const withdrawalStatus = otpRequired
-    ? "otp_required"
-    : transferStatus === "success" || transferStatus === "completed"
+  // Matches ITransaction["status"]: "pending" | "completed" | "failed" | "refunded"
+  const withdrawalStatus: ITransaction["status"] =
+    transferStatus === "success" || transferStatus === "completed"
       ? "completed"
       : "pending";
 
-  // Start database transaction to create the withdrawal record
   const session = await mongoose.startSession();
   session.startTransaction();
 
-  // `transaction` is declared outside the try block so it's still in scope
-  // for the response-building code that runs after commit, without that
-  // code needing to live inside the abortable try/catch itself.
-  let transaction;
+  let transaction: mongoose.HydratedDocument<ITransaction> | undefined;
 
   try {
-    // Double-check balance hasn't changed (race condition protection)
     const finalBalance = await Transaction.getEventBalance(eventId);
 
     if (requestedPayout > finalBalance) {
@@ -379,8 +364,7 @@ export const withdraw = catchAsync(async (req, res, next) => {
       );
     }
 
-    // Create withdrawal transaction (completed, pending, or awaiting OTP)
-    [transaction] = await Transaction.create(
+    const createdDocs = await Transaction.create(
       [
         {
           event: event._id,
@@ -390,6 +374,7 @@ export const withdraw = catchAsync(async (req, res, next) => {
           fee: withdrawalFee,
           currency: "NGN",
           status: withdrawalStatus,
+          settledAt: withdrawalStatus === "completed" ? new Date() : undefined,
           reference: payoutReference,
           transferCode,
           gateway: "paystack",
@@ -407,20 +392,16 @@ export const withdraw = catchAsync(async (req, res, next) => {
       { session },
     );
 
-    // Commit the transaction. This is the LAST thing that happens inside
-    // this try block. Once this line succeeds, the session can no longer
-    // be aborted — so nothing that follows it may live inside this
-    // try/catch, or a failure in that later code (e.g. the balance lookup
-    // below) will hit the catch block and call abortTransaction() on an
-    // already-committed session, which throws
-    // "Cannot call abortTransaction after calling commitTransaction".
+    transaction =
+      createdDocs[0] as unknown as mongoose.HydratedDocument<ITransaction>;
+
+    // Commit is the LAST statement in this try block. Once it succeeds the
+    // session can't be aborted, so nothing after it (e.g. the balance
+    // lookup below) may live inside this try/catch.
     await session.commitTransaction();
   } catch (error: any) {
-    // Rollback only ever runs for failures that happened BEFORE commit
-    // succeeded (balance check, Transaction.create, or commit itself
-    // failing). By the time we're in this catch, commitTransaction has
-    // either not been called yet or has itself thrown, so the session is
-    // guaranteed to still be abortable here.
+    // Only reaches here for failures before commit succeeded, so the
+    // session is guaranteed still abortable.
     await session.abortTransaction();
 
     if (error instanceof AppError) {
@@ -437,15 +418,8 @@ export const withdraw = catchAsync(async (req, res, next) => {
     session.endSession();
   }
 
-  // Everything below runs ONLY after a successful commit, fully outside
-  // the try/catch above. If anything here throws (e.g. getEventBalance
-  // hiccups, or res.json() chokes on the payload), it propagates as a
-  // normal unhandled error in this async handler rather than triggering
-  // an abort on a session that's already done. The withdrawal record is
-  // already safely persisted at this point regardless of what happens
-  // next, which is the correct behavior: a flaky balance lookup for the
-  // response payload should never be allowed to imply the withdrawal
-  // itself failed.
+  // Runs only after a successful commit. The withdrawal record is already
+  // persisted regardless of what happens in this block.
   const newBalance =
     withdrawalStatus === "completed"
       ? await Transaction.getEventBalance(eventId)
@@ -456,15 +430,15 @@ export const withdraw = catchAsync(async (req, res, next) => {
   const message =
     withdrawalStatus === "completed"
       ? "Payout completed successfully"
-      : withdrawalStatus === "otp_required"
-        ? "Payout requires OTP confirmation at the payment gateway before it can complete. Please contact support to finalize this transfer, or disable OTP-based transfer confirmation in your Paystack dashboard to prevent this in the future."
-        : "Payout initiated successfully and is pending confirmation";
+      : "Payout initiated successfully and is pending confirmation";
 
   res.status(statusCode).json({
     status: "success",
     data: {
       transaction,
       newBalance,
+      fee: withdrawalFee,
+      feeResponsibility: event.feeResponsibility,
     },
     message,
   });
@@ -707,77 +681,157 @@ export const verifyPayment = catchAsync(async (req, res, next) => {
 });
 
 export const paystackWebhook = catchAsync(async (req, res, _next) => {
-  // Handle Paystack webhook events here
   const payload = req.body;
   const hash = crypto
     .createHmac("sha512", process.env.PAYSTACK_SECRET_KEY!)
     .update(JSON.stringify(payload))
     .digest("hex");
-
   const signature = req.headers["x-paystack-signature"];
 
-  // Verify the signature
-  if (hash !== signature || payload.event !== "charge.success") {
+  if (hash !== signature) {
     return res.sendStatus(400);
   }
 
-  const paymentData = payload.data;
-  const reference = paymentData.reference;
+  const eventType = payload.event;
+  const eventData = payload.data;
 
-  // Verify transaction with Paystack
   try {
-    const response = await paystack.get(`/transaction/verify/${reference}`);
+    switch (eventType) {
+      case "charge.success": {
+        const reference = eventData.reference;
 
-    // Verify payment was successful
-    const verifiedData = response.data.data;
-    if (verifiedData.status !== "success") {
-      return res.sendStatus(400);
-    }
+        // Verify transaction with Paystack
+        const response = await paystack.get(`/transaction/verify/${reference}`);
+        const verifiedData = response.data.data;
 
-    // Check payment type from metadata
-    const paymentType = verifiedData.metadata.type;
+        if (verifiedData.status !== "success") {
+          return res.sendStatus(400);
+        }
 
-    switch (paymentType) {
-      case "chipin":
-        // Check if already processed (idempotency)
+        const paymentType = verifiedData.metadata.type;
+
+        switch (paymentType) {
+          case "chipin": {
+            // Check if already processed (idempotency)
+            const existingTransaction = await Transaction.findOne({
+              paymentReference: reference,
+            });
+            if (
+              existingTransaction &&
+              existingTransaction.status === "completed"
+            ) {
+              return res.sendStatus(200); // Already processed
+            }
+
+            const completedTransaction = await Transaction.findOneAndUpdate(
+              { paymentReference: reference },
+              {
+                status: "completed",
+                metadata: {
+                  transactionId: reference?.toString(),
+                  gatewayResponse: verifiedData.gateway_response,
+                },
+              },
+              { new: true },
+            );
+
+            // Create or update response for the user with "going" status
+            if (completedTransaction) {
+              await Response.findOneAndUpdate(
+                {
+                  event: completedTransaction.event,
+                  user: completedTransaction.userId,
+                },
+                {
+                  status: "going",
+                  amountPaid: completedTransaction.amount,
+                },
+                { upsert: true, new: true },
+              );
+            }
+            break;
+          }
+          case "ticket":
+            // Handle ticket payment update here
+            break;
+          default:
+            return res.sendStatus(400);
+        }
+        break;
+      }
+
+      // Fires once a transfer (withdrawal) actually settles at Paystack.
+      // This - not the initial /transfer response in the withdraw handler -
+      // is the source of truth for completion, since "pending"/"processing"/
+      // "queued" there only mean the transfer was accepted, not settled.
+      case "transfer.success": {
+        const transferReference = eventData.reference;
+        const transferCode = eventData.transfer_code;
+
         const existingTransaction = await Transaction.findOne({
-          paymentReference: reference,
+          type: "withdrawal",
+          $or: [{ reference: transferReference }, { transferCode }],
         });
-        if (existingTransaction && existingTransaction.status === "completed") {
+
+        if (!existingTransaction) {
+          console.error(
+            `transfer.success: no matching withdrawal for reference=${transferReference} transferCode=${transferCode}`,
+          );
+          return res.sendStatus(200);
+        }
+
+        if (existingTransaction.status === "completed") {
           return res.sendStatus(200); // Already processed
         }
 
-        // Update transaction status
-        const completedTransaction = await Transaction.findOneAndUpdate(
-          { paymentReference: reference },
-          {
-            status: "completed",
-            metadata: {
-              transactionId: reference?.toString(),
-              gatewayResponse: verifiedData.gateway_response,
-            },
-          },
-          { new: true },
-        );
+        existingTransaction.status = "completed";
+        existingTransaction.settledAt = new Date();
+        existingTransaction.metadata = {
+          ...existingTransaction.metadata,
+          gatewayResponse: eventData,
+        };
+        await existingTransaction.save();
+        break;
+      }
 
-        // Create or update response for the user with "going" status
-        if (completedTransaction) {
-          await Response.findOneAndUpdate(
-            {
-              event: completedTransaction.event,
-              user: completedTransaction.userId,
-            },
-            {
-              status: "going",
-              amountPaid: completedTransaction.amount,
-            },
-            { upsert: true, new: true },
+      // Transfer was rejected or reversed. Mark it terminal so it doesn't
+      // sit as "pending" forever and so it stops being counted against
+      // the event's available balance.
+      case "transfer.failed":
+      case "transfer.reversed": {
+        const transferReference = eventData.reference;
+        const transferCode = eventData.transfer_code;
+
+        const existingTransaction = await Transaction.findOne({
+          type: "withdrawal",
+          $or: [{ reference: transferReference }, { transferCode }],
+        });
+
+        if (!existingTransaction) {
+          console.error(
+            `${eventType}: no matching withdrawal for reference=${transferReference} transferCode=${transferCode}`,
           );
+          return res.sendStatus(200);
         }
+
+        if (
+          existingTransaction.status === "completed" ||
+          existingTransaction.status === "failed"
+        ) {
+          return res.sendStatus(200); // Already terminal
+        }
+
+        // Not "settled" in the financial sense (no money moved), so
+        // settledAt is intentionally left unset here.
+        existingTransaction.status = "failed";
+        existingTransaction.metadata = {
+          ...existingTransaction.metadata,
+          gatewayResponse: eventData,
+        };
+        await existingTransaction.save();
         break;
-      case "ticket":
-        // Handle ticket payment update here
-        break;
+      }
+
       default:
         return res.sendStatus(400);
     }

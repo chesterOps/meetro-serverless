@@ -32,6 +32,7 @@ const allowedFields = [
   "isPrivate",
   "eventType",
   "font",
+  "feeResponsibility",
 ];
 
 // Event router
@@ -41,6 +42,7 @@ eventRouter
   .route("/")
   .post(
     protect,
+    upload.any(),
     jsonBodyParse(
       "cohosts",
       "category",
@@ -48,19 +50,14 @@ eventRouter
       "location",
       "chipInDetails",
     ),
-    upload.any(),
     uploadEventImages,
     createEvent,
   );
 
 eventRouter.get("/my-events", protect, getMyEvents);
-
 eventRouter.get("/event-counts", protect, getUserEventCounts);
-
 eventRouter.post("/confirm-attendance", protect, confirmAttendance);
-
 eventRouter.get("/:id/guests", protect, getAllGuests);
-
 eventRouter.get("/:id/protected", protect, getEvent(true));
 
 eventRouter
@@ -69,6 +66,7 @@ eventRouter
   .get(isLoggedIn, getEvent())
   .patch(
     protect,
+    upload.any(),
     jsonBodyParse(
       "cohosts",
       "category",
@@ -76,7 +74,6 @@ eventRouter
       "location",
       "chipInDetails",
     ),
-    upload.any(),
     uploadEventImages,
     filter(...allowedFields),
     updateEvent,

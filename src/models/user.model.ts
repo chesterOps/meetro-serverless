@@ -23,7 +23,7 @@ export interface IUser extends mongoose.Document {
     eventUpdates: boolean;
     guestRegistrations: boolean;
     productUpdates: boolean;
-    eventFeesPaidBy: "user" | "organizer";
+    eventFeesPaidBy: "host" | "guests";
   };
   bankDetails?: {
     accountNumber: string;
@@ -134,8 +134,8 @@ const userSchema = new mongoose.Schema<IUser, UserModel, IUserMethods>(
         },
         eventFeesPaidBy: {
           type: String,
-          enum: ["user", "organizer"],
-          default: "organizer",
+          enum: ["host", "guests"],
+          default: "host",
         },
       },
     },

@@ -49,9 +49,13 @@ export interface IEvent {
   cohosts: {
     name?: string;
     email?: string;
-    photo?: string;
+    photo?: {
+      public_id?: string;
+      url: string;
+    };
     id?: mongoose.Types.ObjectId;
     role: string;
+    hasAccount: boolean;
   }[];
   image: {
     public_id?: string;
@@ -64,6 +68,7 @@ export interface IEvent {
     type: string;
     details?: string;
   };
+  feeResponsibility: "host" | "guests";
   updateCount: number;
   slug: string;
   socials?: {
@@ -215,16 +220,28 @@ const eventSchema = new mongoose.Schema<IEvent, EventModel>(
       ref: "User",
       required: [true, "Event host is required"],
     },
+    feeResponsibility: {
+      type: String,
+      enum: ["host", "guests"],
+      default: "host",
+    },
     cohosts: {
       type: [
         {
           name: String,
           email: String,
-          photo: String,
+          photo: {
+            public_id: String,
+            url: String,
+          },
           role: String,
           id: {
             type: mongoose.Types.ObjectId,
             ref: "User",
+          },
+          hasAccount: {
+            type: Boolean,
+            default: false,
           },
         },
       ],
@@ -355,7 +372,7 @@ eventSchema.pre(/^find/, async function (this: mongoose.Query<any, any>) {
     { path: "host", select: "firstName lastName email photo" },
     {
       path: "guests",
-      select: "user status -event createdAt",
+      select: "user status guestEmail guestName amountPaid -event createdAt",
       options: { limit: 10, sort: { createdAt: 1 } },
     },
     {
