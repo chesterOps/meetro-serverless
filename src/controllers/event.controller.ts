@@ -591,19 +591,16 @@ export const getMyEvents = catchAsync(async (req, res, _next) => {
 });
 
 export const updateEvent = catchAsync(async (req, res, next) => {
-  // Get user from res.locals
   const user = res.locals.user;
-  // Get event ID from params
   const eventId = req.params.id;
-  // Find event by ID
-  const event = await Event.findById(eventId).select("+updateCount");
 
-  // If not found, return error
+  const event = await Event.findById(eventId)
+    .select("+updateCount")
+    .populate("host", "_id");
+
   if (!event) return next(new AppError("Event not found", 404));
 
-  // Check if user has permission to update
   const isHost = event.host._id.toString() === user._id.toString();
-
   const isAdmin = user.role === "admin";
 
   if (!isAdmin && !isHost) {
@@ -612,7 +609,6 @@ export const updateEvent = catchAsync(async (req, res, next) => {
     );
   }
 
-  // Check updateCount limit (skip for admins)
   if (!isAdmin && event.updateCount >= 3) {
     return next(
       new AppError(
@@ -622,57 +618,40 @@ export const updateEvent = catchAsync(async (req, res, next) => {
     );
   }
 
-  // Capture existing cohost photos BEFORE they get overwritten below,
-  // keyed by public_id so we can diff against the incoming set later
   const oldCohostPublicIds = new Set(
     (event.cohosts || []).map((c: any) => c.photo?.public_id).filter(Boolean),
   );
 
-  // Process cohosts
   if (req.body.cohosts && req.body.cohosts.length > 0) {
     const cohostUsers = await User.find({
       email: { $in: req.body.cohosts.map((cohost: any) => cohost.email) },
     });
-    if (cohostUsers && cohostUsers.length > 0) {
-      req.body.cohosts = req.body.cohosts.map((cohost: any) => {
-        const matchedUser = cohostUsers.find(
-          (user) => user.email === cohost.email,
-        );
-        return normalizeCohost(cohost, matchedUser);
-      });
-    } else {
-      req.body.cohosts = req.body.cohosts.map((cohost: any) =>
-        normalizeCohost(cohost),
-      );
-    }
-  } else {
+    req.body.cohosts = req.body.cohosts.map((cohost: any) => {
+      const matchedUser = cohostUsers.find((u) => u.email === cohost.email);
+      return normalizeCohost(cohost, matchedUser);
+    });
+  } else if (req.body.cohosts) {
     req.body.cohosts = [];
   }
+  // If req.body.cohosts is undefined entirely, leave event.cohosts untouched.
 
-  // Diff: any old cohost photo not present in the new cohosts list
-  // (either the cohost was removed, or their photo was replaced) gets deleted
-  const newCohostPublicIds = new Set(
-    req.body.cohosts.map((c: any) => c.photo?.public_id).filter(Boolean),
-  );
-
-  const cohostPhotosToDelete = Array.from(oldCohostPublicIds).filter(
-    (publicId) => !newCohostPublicIds.has(publicId),
-  );
-
-  if (cohostPhotosToDelete.length > 0) {
-    await Promise.all(
-      cohostPhotosToDelete.map((publicId) => deleteImage(publicId as string)),
+  let cohostPhotosToDelete: string[] = [];
+  if (req.body.cohosts) {
+    const newCohostPublicIds = new Set(
+      req.body.cohosts.map((c: any) => c.photo?.public_id).filter(Boolean),
     );
+    cohostPhotosToDelete = Array.from(oldCohostPublicIds).filter(
+      (publicId) => !newCohostPublicIds.has(publicId),
+    ) as string[];
   }
 
-  // Check for new event image and delete old image if necessary
-  if (req.body.image && event.image && event.image.public_id)
-    await deleteImage(event.image.public_id);
+  // req.body.image is only present here if a NEW image was actually uploaded
+  // (uploadEventImages deletes it otherwise) — so this check is now safe.
+  const oldEventImagePublicId =
+    req.body.image && event.image?.public_id ? event.image.public_id : null;
 
-  // Update event with new data
   Object.assign(event, req.body);
 
-  // Adjust event location and meetingURL based on eventType
   switch (event.eventType) {
     case "online":
       event.location = undefined;
@@ -682,18 +661,27 @@ export const updateEvent = catchAsync(async (req, res, next) => {
       break;
   }
 
-  // Increment updateCount if not admin
   if (!isAdmin) event.updateCount += 1;
 
-  // Save updated event
-  await event.save({
-    validateBeforeSave: false,
-  });
+  // Save FIRST — only delete storage assets once the DB write is confirmed
+  await event.save({ validateBeforeSave: false });
 
-  // Prepare response data
+  const deletions = [
+    ...cohostPhotosToDelete.map((id) => deleteImage(id)),
+    ...(oldEventImagePublicId ? [deleteImage(oldEventImagePublicId)] : []),
+  ];
+
+  if (deletions.length > 0) {
+    const results = await Promise.allSettled(deletions);
+    results.forEach((r) => {
+      if (r.status === "rejected") {
+        console.error("Failed to delete orphaned image:", r.reason);
+      }
+    });
+  }
+
   const eventData = formatEventData(event);
 
-  // Send response
   res.status(200).json({
     status: "success",
     data: eventData,

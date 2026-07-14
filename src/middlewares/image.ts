@@ -89,71 +89,90 @@ export const uploadImage =
  * the client should resend the existing { public_id, url } photo object
  * in req.body.cohosts[i].photo so it's preserved as-is.
  */
-export const uploadEventImages = async (
-  req: Request,
-  _res: Response,
-  next: NextFunction,
-) => {
-  try {
-    const files = (req.files as Express.Multer.File[]) || [];
+export const uploadEventImages =
+  (isUpdate = false) =>
+  async (req: Request, _res: Response, next: NextFunction) => {
+    try {
+      const files = (req.files as Express.Multer.File[]) || [];
 
-    // --- Event image ---
-    const imageFile = files.find((f) => f.fieldname === "image");
-    if (imageFile) {
-      try {
-        const public_id = buildPublicId(imageFile.originalname);
-        const result = (await uploadToCloudinary(
-          imageFile.buffer,
-          "meetro",
-          public_id,
-        )) as CloudinaryUploadResult;
+      // --- Event image ---
+      const imageFile = files.find((f) => f.fieldname === "image");
+
+      if (imageFile) {
+        try {
+          const public_id = buildPublicId(imageFile.originalname);
+          const result = (await uploadToCloudinary(
+            imageFile.buffer,
+            "meetro",
+            public_id,
+          )) as CloudinaryUploadResult;
+          req.body.image = {
+            public_id: result.public_id,
+            url: result.secure_url,
+          };
+        } catch (error: any) {
+          console.error("Event image upload failed:", error.message);
+          delete req.body.image;
+        }
+      } else if (isUpdate) {
+        // No new file uploaded on an UPDATE — never trust whatever the client
+        // put in req.body.image. Deleting it means the controller's
+        // Object.assign leaves the existing event.image untouched.
+        delete req.body.image;
+      } else if (typeof req.body.image === "string" && req.body.image.trim()) {
+        // CREATE with no uploaded file, but a plain URL string was sent —
+        // this is one of the default/template images. Normalize it into the
+        // same { public_id, url } shape a real Cloudinary upload produces,
+        // so the schema and downstream consumers (e.g. formatEventData) see
+        // a consistent image object either way.
         req.body.image = {
-          public_id: result.public_id,
-          url: result.secure_url,
+          public_id: null,
+          url: req.body.image.trim(),
         };
-      } catch (error: any) {
-        console.error("Event image upload failed:", error.message);
+      } else if (!isUpdate) {
+        // CREATE with no file and no usable string — don't let a bad/empty
+        // value reach Event.create.
+        delete req.body.image;
       }
-    } else if (req.body.image && typeof req.body.image === "string") {
-      req.body.image = { url: req.body.image };
+
+      // --- Cohost images ---
+      if (Array.isArray(req.body.cohosts)) {
+        const cohostImageFiles = files.filter((f) =>
+          /^cohostImage_\d+$/.test(f.fieldname),
+        );
+
+        await Promise.all(
+          cohostImageFiles.map(async (file) => {
+            const idx = parseInt(file.fieldname.split("_")[1], 10);
+            if (Number.isNaN(idx) || !req.body.cohosts[idx]) return;
+
+            try {
+              const public_id = buildPublicId(file.originalname);
+              const result = (await uploadToCloudinary(
+                file.buffer,
+                "meetro",
+                public_id,
+              )) as CloudinaryUploadResult;
+
+              req.body.cohosts[idx].photo = {
+                public_id: result.public_id,
+                url: result.secure_url,
+              };
+            } catch (error: any) {
+              console.error(
+                `Cohost[${idx}] image upload failed:`,
+                error.message,
+              );
+            }
+          }),
+        );
+      }
+    } catch (error: any) {
+      console.error("Failed to process event images:", error.message);
     }
 
-    // --- Cohost images ---
-    if (Array.isArray(req.body.cohosts)) {
-      const cohostImageFiles = files.filter((f) =>
-        /^cohostImage_\d+$/.test(f.fieldname),
-      );
-
-      await Promise.all(
-        cohostImageFiles.map(async (file) => {
-          const idx = parseInt(file.fieldname.split("_")[1], 10);
-          if (Number.isNaN(idx) || !req.body.cohosts[idx]) return;
-
-          try {
-            const public_id = buildPublicId(file.originalname);
-            const result = (await uploadToCloudinary(
-              file.buffer,
-              "meetro",
-              public_id,
-            )) as CloudinaryUploadResult;
-
-            // New upload overrides whatever photo value the client sent
-            req.body.cohosts[idx].photo = {
-              public_id: result.public_id,
-              url: result.secure_url,
-            };
-          } catch (error: any) {
-            console.error(`Cohost[${idx}] image upload failed:`, error.message);
-          }
-        }),
-      );
-    }
-  } catch (error: any) {
-    console.error("Failed to process event images:", error.message);
-  }
-
-  next();
-};
+    next();
+  };
 
 export const deleteImage = async (publicId: string) => {
   try {

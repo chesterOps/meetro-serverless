@@ -38,21 +38,19 @@ const allowedFields = [
 // Event router
 const eventRouter = express.Router();
 
-eventRouter
-  .route("/")
-  .post(
-    protect,
-    upload.any(),
-    jsonBodyParse(
-      "cohosts",
-      "category",
-      "dressCode",
-      "location",
-      "chipInDetails",
-    ),
-    uploadEventImages,
-    createEvent,
-  );
+eventRouter.route("/").post(
+  protect,
+  upload.any(),
+  jsonBodyParse(
+    "cohosts",
+    "category",
+    "dressCode",
+    "location",
+    "chipInDetails",
+  ),
+  uploadEventImages(false), // create
+  createEvent,
+);
 
 eventRouter.get("/my-events", protect, getMyEvents);
 eventRouter.get("/event-counts", protect, getUserEventCounts);
@@ -74,7 +72,7 @@ eventRouter
       "location",
       "chipInDetails",
     ),
-    uploadEventImages,
+    uploadEventImages(true), // update
     filter(...allowedFields),
     updateEvent,
   );
